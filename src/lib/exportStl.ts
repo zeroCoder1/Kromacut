@@ -1,55 +1,39 @@
-// Binary STL exporter for three.js meshes (Kromacut)
-// Exports the mesh's geometry (respecting current scale) into a binary STL Blob.
-// Progress callback receives values in [0,1].
-import type * as THREE from 'three';
+// Binary STL exporter for three.js objects (Kromacut)
+// Exports the object's geometry (respecting world transforms) into a binary STL Blob.
+// Merges all Mesh descendants into a single STL file.
+import * as THREE from 'three';
 
-export async function exportMeshToStlBlob(
-    mesh: THREE.Mesh,
+export async function exportObjectToStlBlob(
+    root: THREE.Object3D,
     onProgress?: (p: number) => void
 ): Promise<Blob> {
-    const geometry = mesh.geometry as THREE.BufferGeometry;
-    const pos = geometry.getAttribute('position');
-    if (!pos) throw new Error('No geometry position attribute to export');
-    // ensure normals to have stable facet normals; computing if absent
-    try {
-        geometry.computeVertexNormals();
-    } catch {
-        /* ignore */
+    // 1. Collect all meshes
+    const meshes: THREE.Mesh[] = [];
+    root.updateMatrixWorld(true);
+    root.traverse((obj) => {
+        if ((obj as THREE.Mesh).isMesh) {
+            const m = obj as THREE.Mesh;
+            if (m.geometry && m.visible) {
+                meshes.push(m);
+            }
+        }
+    });
+
+    if (meshes.length === 0) throw new Error('No meshes found to export');
+
+    // 2. Calculate total size
+    let totalTris = 0;
+    for (const mesh of meshes) {
+        const geom = mesh.geometry;
+        if (geom.index) {
+            totalTris += geom.index.count / 3;
+        } else if (geom.attributes.position) {
+            totalTris += geom.attributes.position.count / 3;
+        }
     }
-    const index = geometry.getIndex();
-    const sx = mesh.scale.x;
-    const sy = mesh.scale.y;
-    const sz = mesh.scale.z;
 
-    const getTri = (a: number, b: number, c: number) => {
-        const ax = pos.getX(a),
-            ay = pos.getY(a),
-            az = pos.getZ(a);
-        const bx = pos.getX(b),
-            by = pos.getY(b),
-            bz = pos.getZ(b);
-        const cx = pos.getX(c),
-            cy = pos.getY(c),
-            cz = pos.getZ(c);
-        const ux = bx - ax,
-            uy = by - ay,
-            uz = bz - az;
-        const vx = cx - ax,
-            vy = cy - ay,
-            vz = cz - az;
-        let nx = uy * vz - uz * vy;
-        let ny = uz * vx - ux * vz;
-        let nz = ux * vy - uy * vx;
-        const len = Math.hypot(nx, ny, nz) || 1;
-        nx /= len;
-        ny /= len;
-        nz /= len;
-        return { ax, ay, az, bx, by, bz, cx, cy, cz, nx, ny, nz };
-    };
-
-    const totalTris = index ? index.count / 3 : pos.count / 3;
     const headerBytes = 80;
-    const triSize = 50; // 12 bytes normal, 9*4 bytes vertices, 2 bytes attribute
+    const triSize = 50;
     const totalBytes = headerBytes + 4 + totalTris * triSize;
     let buffer: ArrayBuffer;
     try {
@@ -62,50 +46,79 @@ export async function exportMeshToStlBlob(
     for (let i = 0; i < headerStr.length && i < 80; i++) view.setUint8(i, headerStr.charCodeAt(i));
     view.setUint32(headerBytes, totalTris, true);
 
-    const CHUNK = 20000;
+    const CHUNK = 5000; // Process in chunks to yield to UI
     let offset = headerBytes + 4;
-    const sx_f = sx,
-        sy_f = sy,
-        sz_f = sz;
-    const writeTri = (t: ReturnType<typeof getTri>) => {
-        view.setFloat32(offset + 0, t.nx, true);
-        view.setFloat32(offset + 4, t.ny, true);
-        view.setFloat32(offset + 8, t.nz, true);
-        view.setFloat32(offset + 12, t.ax * sx_f, true);
-        view.setFloat32(offset + 16, t.ay * sy_f, true);
-        view.setFloat32(offset + 20, t.az * sz_f, true);
-        view.setFloat32(offset + 24, t.bx * sx_f, true);
-        view.setFloat32(offset + 28, t.by * sy_f, true);
-        view.setFloat32(offset + 32, t.bz * sz_f, true);
-        view.setFloat32(offset + 36, t.cx * sx_f, true);
-        view.setFloat32(offset + 40, t.cy * sy_f, true);
-        view.setFloat32(offset + 44, t.cz * sz_f, true);
-        view.setUint16(offset + 48, 0, true);
-        offset += triSize;
-    };
+    let processedTris = 0;
 
-    if (index) {
-        for (let i = 0, tri = 0; i < index.count; i += 3, tri++) {
-            const a = index.getX(i),
-                b = index.getX(i + 1),
+    // Helper vector for transforming
+    const vA = new THREE.Vector3();
+    const vB = new THREE.Vector3();
+    const vC = new THREE.Vector3();
+    const n = new THREE.Vector3();
+    const vAB = new THREE.Vector3();
+    const vAC = new THREE.Vector3();
+
+    // 3. Write triangles
+    for (const mesh of meshes) {
+        const geom = mesh.geometry;
+        const pos = geom.getAttribute('position');
+        const index = geom.getIndex();
+        const matrix = mesh.matrixWorld;
+
+        // Ensure normals for lighting if needed, though STL usually ignores them or expects computed face normals
+        // We compute face normals on the fly below for the STL file
+
+        const count = index ? index.count : pos.count;
+
+        for (let i = 0; i < count; i += 3) {
+            // Get indices
+            let a, b, c;
+            if (index) {
+                a = index.getX(i);
+                b = index.getX(i + 1);
                 c = index.getX(i + 2);
-            writeTri(getTri(a, b, c));
-            if (tri % CHUNK === 0 && onProgress) {
-                onProgress(tri / totalTris);
-                await new Promise((r) => setTimeout(r, 0));
+            } else {
+                a = i;
+                b = i + 1;
+                c = i + 2;
             }
-        }
-    } else {
-        for (let i = 0, tri = 0; i < pos.count; i += 3, tri++) {
-            writeTri(getTri(i, i + 1, i + 2));
-            if (tri % CHUNK === 0 && onProgress) {
-                onProgress(tri / totalTris);
+
+            // Get vertices and transform to world space
+            vA.fromBufferAttribute(pos, a).applyMatrix4(matrix);
+            vB.fromBufferAttribute(pos, b).applyMatrix4(matrix);
+            vC.fromBufferAttribute(pos, c).applyMatrix4(matrix);
+
+            // Compute normal
+            vAB.subVectors(vB, vA);
+            vAC.subVectors(vC, vA);
+            n.crossVectors(vAB, vAC).normalize();
+
+            // Write to buffer
+            view.setFloat32(offset + 0, n.x, true);
+            view.setFloat32(offset + 4, n.y, true);
+            view.setFloat32(offset + 8, n.z, true);
+            view.setFloat32(offset + 12, vA.x, true);
+            view.setFloat32(offset + 16, vA.y, true);
+            view.setFloat32(offset + 20, vA.z, true);
+            view.setFloat32(offset + 24, vB.x, true);
+            view.setFloat32(offset + 28, vB.y, true);
+            view.setFloat32(offset + 32, vB.z, true);
+            view.setFloat32(offset + 36, vC.x, true);
+            view.setFloat32(offset + 40, vC.y, true);
+            view.setFloat32(offset + 44, vC.z, true);
+            view.setUint16(offset + 48, 0, true);
+            offset += triSize;
+
+            processedTris++;
+            if (processedTris % CHUNK === 0 && onProgress) {
+                onProgress(processedTris / totalTris);
                 await new Promise((r) => setTimeout(r, 0));
             }
         }
     }
+
     if (onProgress) onProgress(1);
     return new Blob([buffer], { type: 'model/stl' });
 }
 
-export default exportMeshToStlBlob;
+export default exportObjectToStlBlob;
