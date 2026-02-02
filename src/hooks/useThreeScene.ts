@@ -11,7 +11,7 @@ export function useThreeScene(
     const sceneRef = useRef<THREE.Scene | null>(null);
     const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
     const controlsRef = useRef<OrbitControls | null>(null);
-    const meshRef = useRef<THREE.Mesh | null>(null);
+    const modelGroupRef = useRef<THREE.Group | null>(null);
     const materialRef = useRef<THREE.MeshStandardMaterial | null>(null);
 
     useEffect(() => {
@@ -50,8 +50,12 @@ export function useThreeScene(
         key.position.set(2, 3, 1);
         scene.add(key);
 
-        // Placeholder plane (very low res) – will be replaced when image builds
-        const placeholderGeom = new THREE.PlaneGeometry(1, 1, 1, 1);
+        // Container for the model parts
+        const modelGroup = new THREE.Group();
+        scene.add(modelGroup);
+        modelGroupRef.current = modelGroup;
+
+        // Shared material (can be cloned per part if needed, but useful base)
         const material = new THREE.MeshStandardMaterial({
             color: 0xffffff,
             side: THREE.DoubleSide,
@@ -61,13 +65,12 @@ export function useThreeScene(
         });
         material.vertexColors = false;
         materialRef.current = material;
-        const mesh = new THREE.Mesh(placeholderGeom, material);
-        scene.add(mesh);
-        meshRef.current = mesh;
-        // keep mesh simple (no explicit shadow config)
+
+        // (Optional) Add a placeholder if needed, or just leave empty group until build.
+        // For backwards compat with "last mesh" hack:
         try {
-            (window as unknown as { __KROMACUT_LAST_MESH?: THREE.Mesh }).__KROMACUT_LAST_MESH =
-                mesh;
+            (window as unknown as { __KROMACUT_LAST_MESH?: THREE.Object3D }).__KROMACUT_LAST_MESH =
+                modelGroup;
         } catch {
             /* no-op */
         }
@@ -130,7 +133,6 @@ export function useThreeScene(
             ro.disconnect();
             themeObserver.disconnect();
             controls.dispose();
-            placeholderGeom.dispose();
             material.dispose();
             renderer.dispose();
             if (renderer.domElement.parentNode)
@@ -141,7 +143,7 @@ export function useThreeScene(
             sceneRef.current = null;
             cameraRef.current = null;
             controlsRef.current = null;
-            meshRef.current = null;
+            modelGroupRef.current = null;
             materialRef.current = null;
             setIsBuilding(false);
         };
@@ -152,7 +154,7 @@ export function useThreeScene(
         sceneRef,
         cameraRef,
         controlsRef,
-        meshRef,
+        modelGroupRef,
         materialRef,
     } as const;
 }

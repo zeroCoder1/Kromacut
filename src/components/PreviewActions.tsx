@@ -1,5 +1,6 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import {
     RotateCcw,
     RotateCw,
@@ -11,6 +12,8 @@ import {
     Grid3x3,
     Upload,
     Trash2,
+    FileBox,
+    FileType,
 } from 'lucide-react';
 
 export interface PreviewActionsProps {
@@ -32,6 +35,7 @@ export interface PreviewActionsProps {
     onClear: () => void;
     onExportImage: () => Promise<void>;
     onExportStl: () => Promise<void>;
+    onExport3MF: () => Promise<void>;
 }
 
 export const PreviewActions: React.FC<PreviewActionsProps> = ({
@@ -53,6 +57,7 @@ export const PreviewActions: React.FC<PreviewActionsProps> = ({
     onClear,
     onExportImage,
     onExportStl,
+    onExport3MF,
 }) => {
     return (
         <div className="absolute top-4 right-4 flex flex-wrap gap-2 z-[60]">
@@ -113,36 +118,61 @@ export const PreviewActions: React.FC<PreviewActionsProps> = ({
                     </>
                 ))}
 
-            {/* Download button: image in 2D; STL in 3D */}
-            <Button
-                size="icon"
-                title={
-                    mode === '3d'
-                        ? exportingSTL
-                            ? `Exporting STL… ${Math.round(exportProgress * 100)}%`
-                            : 'Download STL'
-                        : 'Download image'
-                }
-                aria-label={
-                    mode === '3d'
-                        ? exportingSTL
-                            ? 'Exporting STL'
-                            : 'Download STL'
-                        : 'Download image'
-                }
-                disabled={!imageAvailable || exportingSTL}
-                onClick={async () => {
-                    if (mode === '3d') await onExportStl();
-                    else await onExportImage();
-                }}
-                className="bg-primary hover:bg-primary/80 text-primary-foreground disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-                {mode === '3d' && exportingSTL ? (
-                    <Loader className="w-4 h-4 animate-spin" />
-                ) : (
+            {/* Download button logic */}
+            {mode === '2d' ? (
+                <Button
+                    size="icon"
+                    title="Download image"
+                    aria-label="Download image"
+                    disabled={!imageAvailable}
+                    onClick={onExportImage}
+                    className="bg-primary hover:bg-primary/80 text-primary-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+                >
                     <Download className="w-4 h-4" />
-                )}
-            </Button>
+                </Button>
+            ) : (
+                <Popover>
+                    <PopoverTrigger asChild>
+                        <Button
+                            size="icon"
+                            title={
+                                exportingSTL
+                                    ? `Exporting… ${Math.round(exportProgress * 100)}%`
+                                    : 'Download 3D Model'
+                            }
+                            aria-label="Download 3D Model"
+                            disabled={!imageAvailable || exportingSTL}
+                            className="bg-primary hover:bg-primary/80 text-primary-foreground disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {exportingSTL ? (
+                                <Loader className="w-4 h-4 animate-spin" />
+                            ) : (
+                                <Download className="w-4 h-4" />
+                            )}
+                        </Button>
+                    </PopoverTrigger>
+                    <PopoverContent align="end" className="w-48 p-1 flex flex-col gap-1">
+                        <Button
+                            variant="ghost"
+                            onClick={onExportStl}
+                            disabled={exportingSTL}
+                            className="justify-start gap-2 h-9 px-2 font-normal"
+                        >
+                            <FileBox className="w-4 h-4 text-muted-foreground" />
+                            <span>Download STL</span>
+                        </Button>
+                        <Button
+                            variant="ghost"
+                            onClick={onExport3MF}
+                            disabled={exportingSTL}
+                            className="justify-start gap-2 h-9 px-2 font-normal"
+                        >
+                            <FileType className="w-4 h-4 text-muted-foreground" />
+                            <span>Download 3MF</span>
+                        </Button>
+                    </PopoverContent>
+                </Popover>
+            )}
 
             {mode === '2d' && (
                 <>

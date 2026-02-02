@@ -74,9 +74,10 @@ export default function ThreeDView({
         height: number;
         depth: number;
     } | null>(null);
-    const { cameraRef, controlsRef, meshRef, materialRef } = useThreeScene(mountRef, setIsBuilding);
-
-    // Three.js initialization moved into `useThreeScene` hook for clarity.
+    const { cameraRef, controlsRef, modelGroupRef, materialRef } = useThreeScene(
+        mountRef,
+        setIsBuilding
+    );
 
     // Sync overlay visibility when build state changes
     useEffect(() => {
@@ -96,8 +97,8 @@ export default function ThreeDView({
     const lastRebuildRef = useRef<number>(rebuildSignal);
 
     useEffect(() => {
-        const mesh = meshRef.current;
-        if (!mesh || !imageSrc) return;
+        const modelGroup = modelGroupRef.current;
+        if (!modelGroup || !imageSrc) return;
 
         // If parent requested a rebuild via the rebuildSignal, clear the last params key
         // to force the effect to proceed even if params otherwise match.
@@ -177,7 +178,7 @@ export default function ThreeDView({
                 const w = img.naturalWidth;
                 const h = img.naturalHeight;
                 if (!w || !h) return;
-                // const t0 = performance.now(); // instrumentation placeholder
+
                 // Prepare a cropped canvas of the opaque bounding box for consistent sampling
                 const canvas = document.createElement('canvas');
                 const bMinX = bbox ? bbox.minX : 0;
@@ -191,7 +192,8 @@ export default function ThreeDView({
                 ctx.drawImage(img, bMinX, bMinY, bW, bH, 0, 0, bW, bH);
                 const { data } = ctx.getImageData(0, 0, bW, bH);
 
-                // Create a canvas-based texture for crisp sampling and apply nearest-neighbor filtering
+                // For preview mode, we stick to the single-mesh terrain approach for performance
+                // Create a canvas-based texture for crisp sampling
                 try {
                     const tex = new THREE.CanvasTexture(canvas);
                     tex.magFilter = THREE.NearestFilter;
@@ -200,7 +202,6 @@ export default function ThreeDView({
                     tex.wrapS = THREE.ClampToEdgeWrapping;
                     tex.wrapT = THREE.ClampToEdgeWrapping;
                     tex.colorSpace = THREE.SRGBColorSpace;
-                    // Using cropped canvas: 0..1 UVs map to the entire cropped image
                     tex.repeat.set(1, 1);
                     tex.offset.set(0, 0);
                     tex.needsUpdate = true;
@@ -228,7 +229,7 @@ export default function ThreeDView({
                     cumulativePerOrderPos[pos] = running;
                 });
 
-                // Create indexed plane geometry (grid) and compute per-vertex heights on the indexed grid.
+                // Create indexed plane geometry (grid)
                 const indexedPlane = new THREE.PlaneGeometry(1, 1, resolution, resolution);
                 const idxPos = indexedPlane.getAttribute('position');
                 const indexedVertexCount = idxPos.count;
@@ -238,11 +239,9 @@ export default function ThreeDView({
 
                 // Compute heights on the indexed grid vertices
                 for (let vi = 0; vi < indexedVertexCount; vi++) {
-                    // Prefer UVs for consistent sampling across geometry
                     const u = uvIdx ? uvIdx.getX(vi) : idxPos.getX(vi) + 0.5;
                     const v = uvIdx ? uvIdx.getY(vi) : idxPos.getY(vi) + 0.5;
                     const px = Math.min(bW - 1, Math.max(0, Math.round(u * (bW - 1))));
-                    // Flip Y so v=0 corresponds to top of the image
                     const py = Math.min(bH - 1, Math.max(0, Math.round((1 - v) * (bH - 1))));
                     const idx = (py * bW + px) * 4;
                     const r = data[idx];
@@ -261,7 +260,8 @@ export default function ThreeDView({
                     }
                     if (opaque && layerHeight > 0) {
                         const delta = Math.max(0, height - slicerFirstLayerHeight);
-                        height = slicerFirstLayerHeight + Math.round(delta / layerHeight) * layerHeight;
+                        height =
+                            slicerFirstLayerHeight + Math.round(delta / layerHeight) * layerHeight;
                     }
                     idxPos.setZ(vi, height);
 
@@ -272,275 +272,43 @@ export default function ThreeDView({
                     }
                 }
 
-                // Optional: flatten heights per cell to eliminate single-vertex spikes (creates square plateaus)
-                if (stepped) {
-                    const widthSegments = resolution;
-                    const heightSegments = resolution;
-                    const vertsPerRow = widthSegments + 1;
-                    // Snapshot original Z values to avoid propagation during stepping
-                    const origZ = new Float32Array(idxPos.count);
-                    for (let vi = 0; vi < idxPos.count; vi++) origZ[vi] = idxPos.getZ(vi);
-
-                    // Compute per-cell heights from original grid
-                    const cellHeights = new Float32Array(widthSegments * heightSegments);
-                    for (let y = 0; y < heightSegments; y++) {
-                        for (let x = 0; x < widthSegments; x++) {
-                            const a = y * vertsPerRow + x;
-                            const bI = a + 1;
-                            const c = a + vertsPerRow;
-                            const d = c + 1;
-                            const hA = origZ[a];
-                            const hB = origZ[bI];
-                            const hC = origZ[c];
-                            const hD = origZ[d];
-                            const cellH = Math.max(hA, hB, hC, hD);
-                            cellHeights[y * widthSegments + x] = cellH;
-                        }
-                        if (performance.now() - lastYield > YIELD_EVERY_MS) {
-                            await new Promise((r) => requestAnimationFrame(r));
-                            if (token !== buildTokenRef.current) return;
-                            lastYield = performance.now();
-                        }
-                    }
-
-                    // For each vertex, set height to max of adjacent cell heights (up to 4)
-                    for (let vy = 0; vy < heightSegments + 1; vy++) {
-                        for (let vx = 0; vx < widthSegments + 1; vx++) {
-                            let hMax = 0;
-                            // cells (vx-1,vy-1), (vx-1,vy), (vx,vy-1), (vx,vy)
-                            const check = (cx: number, cy: number) => {
-                                if (
-                                    cx >= 0 &&
-                                    cy >= 0 &&
-                                    cx < widthSegments &&
-                                    cy < heightSegments
-                                ) {
-                                    const h = cellHeights[cy * widthSegments + cx];
-                                    if (h > hMax) hMax = h;
-                                }
-                            };
-                            check(vx - 1, vy - 1);
-                            check(vx - 1, vy);
-                            check(vx, vy - 1);
-                            check(vx, vy);
-                            const vi = vy * vertsPerRow + vx;
-                            idxPos.setZ(vi, hMax);
-                        }
-                        if (performance.now() - lastYield > YIELD_EVERY_MS) {
-                            await new Promise((r) => requestAnimationFrame(r));
-                            if (token !== buildTokenRef.current) return;
-                            lastYield = performance.now();
-                        }
-                    }
-                    idxPos.needsUpdate = true;
-                }
-
-                // If preview mode, convert the indexed grid to non-indexed for fast rendering and skip walls/bottom
-                let finalGeom: THREE.BufferGeometry;
-                if (mode === 'preview') {
-                    finalGeom = indexedPlane.toNonIndexed();
-                    indexedPlane.dispose();
-                } else {
-                    // Build final solid by duplicating the indexed grid (top + bottom) and stitching side walls
-                    const widthSegments = resolution;
-                    const heightSegments = resolution;
-                    const vertsPerRow = widthSegments + 1;
-
-                    const gridVertexCount = idxPos.count; // (resolution+1)^2
-                    // Copy positions in indexed grid order
-                    const topPositions = new Float32Array(gridVertexCount * 3);
-                    for (let i = 0; i < gridVertexCount; i++) {
-                        topPositions[i * 3 + 0] = idxPos.getX(i);
-                        topPositions[i * 3 + 1] = idxPos.getY(i);
-                        topPositions[i * 3 + 2] = idxPos.getZ(i);
-                    }
-                    const bottomPositions = new Float32Array(gridVertexCount * 3);
-                    bottomPositions.set(topPositions);
-                    const Z_EPSILON = 1e-4;
-                    for (let i = 0; i < gridVertexCount; i++)
-                        bottomPositions[i * 3 + 2] = -Z_EPSILON;
-
-                    // Track which cells are opaque (have non-zero height)
-                    const cellOpaque = new Array<boolean>(widthSegments * heightSegments);
-                    const HEIGHT_EPS = 1e-6;
-                    for (let y = 0; y < heightSegments; y++) {
-                        for (let x = 0; x < widthSegments; x++) {
-                            const a = y * vertsPerRow + x;
-                            const b = a + 1;
-                            const c = a + vertsPerRow;
-                            const d = c + 1;
-                            const hA = topPositions[a * 3 + 2];
-                            const hB = topPositions[b * 3 + 2];
-                            const hC = topPositions[c * 3 + 2];
-                            const hD = topPositions[d * 3 + 2];
-                            cellOpaque[y * widthSegments + x] =
-                                Math.abs(hA) > HEIGHT_EPS ||
-                                Math.abs(hB) > HEIGHT_EPS ||
-                                Math.abs(hC) > HEIGHT_EPS ||
-                                Math.abs(hD) > HEIGHT_EPS;
-                        }
-                    }
-
-                    // UVs in indexed grid order (duplicate for bottom)
-                    const uvGrid = indexedPlane.getAttribute('uv') as THREE.BufferAttribute | null;
-                    let combinedUVs: Float32Array | null = null;
-                    if (uvGrid) {
-                        combinedUVs = new Float32Array(uvGrid.count * 2 * 2);
-                        for (let i = 0; i < uvGrid.count; i++) {
-                            const u = uvGrid.getX(i);
-                            const v = uvGrid.getY(i);
-                            combinedUVs[i * 2] = u;
-                            combinedUVs[i * 2 + 1] = v;
-                            const bi = i + uvGrid.count;
-                            combinedUVs[bi * 2] = u;
-                            combinedUVs[bi * 2 + 1] = v;
-                        }
-                    }
-
-                    // Build indices: top and bottom faces only for opaque cells
-                    const topIndices: number[] = [];
-                    const bottomIndices: number[] = [];
-                    for (let y = 0; y < heightSegments; y++) {
-                        for (let x = 0; x < widthSegments; x++) {
-                            if (!cellOpaque[y * widthSegments + x]) continue;
-                            const a = y * vertsPerRow + x;
-                            const b = a + 1;
-                            const c = a + vertsPerRow;
-                            const d = c + 1;
-                            // Top face (CCW when viewed from above)
-                            topIndices.push(a, c, b, b, c, d);
-                            // Bottom face (CW when viewed from above, reversed winding)
-                            bottomIndices.push(a, b, c, b, d, c);
-                        }
-                    }
-                    const bottomOffset = gridVertexCount;
-                    const indices: number[] = [...topIndices];
-                    for (let i = 0; i < bottomIndices.length; i++) {
-                        indices.push(bottomOffset + bottomIndices[i]);
-                    }
-
-                    // Build walls: only where there's a transition between opaque and transparent
-                    const isCellOpaque = (cx: number, cy: number) => {
-                        if (cx < 0 || cy < 0 || cx >= widthSegments || cy >= heightSegments)
-                            return false;
-                        return cellOpaque[cy * widthSegments + cx];
-                    };
-                    const pushWall = (tA: number, tB: number) => {
-                        const bA = tA + bottomOffset;
-                        const bB = tB + bottomOffset;
-                        // Wall quad: ensure consistent winding (outward normal)
-                        indices.push(tA, bA, bB, tA, bB, tB);
-                    };
-
-                    // Vertical walls: between columns
-                    for (let x = 0; x <= widthSegments; x++) {
-                        for (let y = 0; y < heightSegments; y++) {
-                            const leftOpaque = isCellOpaque(x - 1, y);
-                            const rightOpaque = isCellOpaque(x, y);
-                            if (leftOpaque !== rightOpaque) {
-                                const tA = y * vertsPerRow + x;
-                                const tB = (y + 1) * vertsPerRow + x;
-                                pushWall(tA, tB);
-                            }
-                        }
-                    }
-                    // Horizontal walls: between rows
-                    for (let y = 0; y <= heightSegments; y++) {
-                        for (let x = 0; x < widthSegments; x++) {
-                            const topOpaque = isCellOpaque(x, y - 1);
-                            const bottomOpaque = isCellOpaque(x, y);
-                            if (topOpaque !== bottomOpaque) {
-                                const tA = y * vertsPerRow + x;
-                                const tB = y * vertsPerRow + (x + 1);
-                                pushWall(tA, tB);
-                            }
-                        }
-                    }
-
-                    const combinedPositions = new Float32Array(gridVertexCount * 2 * 3);
-                    combinedPositions.set(topPositions, 0);
-                    combinedPositions.set(bottomPositions, gridVertexCount * 3);
-
-                    finalGeom = new THREE.BufferGeometry();
-                    finalGeom.setAttribute(
-                        'position',
-                        new THREE.BufferAttribute(combinedPositions, 3)
-                    );
-                    if (combinedUVs)
-                        finalGeom.setAttribute('uv', new THREE.BufferAttribute(combinedUVs, 2));
-                    finalGeom.setIndex(indices);
-
-                    // Expand to non-indexed to avoid 16-bit index limits and ensure per-face shading consistency
-                    const indexedFinal = finalGeom;
-                    finalGeom = indexedFinal.toNonIndexed();
-                    indexedFinal.dispose();
-                    finalGeom.computeVertexNormals();
-                    indexedPlane.dispose();
-                }
-
                 if (token !== buildTokenRef.current) {
-                    finalGeom.dispose();
+                    indexedPlane.dispose();
                     return;
                 }
 
-                const oldGeom = mesh.geometry as THREE.BufferGeometry;
-                mesh.geometry = finalGeom;
-                oldGeom.dispose();
-                try {
-                    (
-                        window as unknown as { __KROMACUT_LAST_MESH?: THREE.Mesh }
-                    ).__KROMACUT_LAST_MESH = mesh;
-                } catch {
-                    /* ignore */
-                }
+                // For preview, we just use the non-indexed terrain
+                const finalGeom = indexedPlane.toNonIndexed();
+                finalGeom.computeVertexNormals();
+                indexedPlane.dispose();
 
-                // Direct pixel to mm mapping: each pixel spans pixelSize mm.
+                // Clear model group and add new mesh
+                modelGroup.clear();
+                // Dispose old materials if they were separate (preview uses shared materialRef)
+                
+                const mesh = new THREE.Mesh(finalGeom, materialRef.current || undefined);
                 const finalW = bbox ? bbox.boxW : w;
                 const finalH = bbox ? bbox.boxH : h;
-                // Map pixel domain to X (width) & Y (height). Heights already in mm on Z; apply optional exaggeration via heightScale.
                 mesh.scale.set(finalW * pixelSize, finalH * pixelSize, heightScale);
+                modelGroup.add(mesh);
+
+                try {
+                    (
+                        window as unknown as { __KROMACUT_LAST_MESH?: THREE.Object3D }
+                    ).__KROMACUT_LAST_MESH = modelGroup;
+                } catch { /* ignore */ }
 
                 // Calculate maximum height (depth) of the model
-                const box = new THREE.Box3().setFromObject(mesh);
+                const box = new THREE.Box3().setFromObject(modelGroup);
                 const maxDepth = box.max.z - box.min.z;
-
-                // Update model dimensions for display
                 setModelDimensions({
                     width: finalW * pixelSize,
                     height: finalH * pixelSize,
                     depth: maxDepth,
                 });
-
-                // Auto-frame using bounding sphere for consistent view
-                try {
-                    const camera = cameraRef.current;
-                    const controls = controlsRef.current;
-                    if (camera && controls) {
-                        const box = new THREE.Box3().setFromObject(mesh);
-                        const sphere = new THREE.Sphere();
-                        box.getBoundingSphere(sphere);
-                        const fov = (camera.fov * Math.PI) / 180;
-                        const distance = sphere.radius / Math.sin(fov / 2);
-                        // Use an oblique direction to show thickness
-                        const dir = new THREE.Vector3(0.9, 0.8, 1).normalize();
-                        const camPos = sphere.center
-                            .clone()
-                            .add(dir.multiplyScalar(distance * 1.35));
-                        camera.position.copy(camPos);
-                        controls.target.copy(sphere.center);
-                        camera.near = Math.max(0.01, sphere.radius * 0.01);
-                        camera.far = sphere.radius * 20;
-                        camera.updateProjectionMatrix();
-                        controls.update();
-                    }
-                } catch {
-                    /* framing failure ignored */
-                }
-                // (Optional instrumentation)
-                // console.log(`[3D] ${mode} build @${resolution} took ${(performance.now()-t0).toFixed(1)}ms`);
             };
 
-            // Build per-pixel column geometry (plateaus) for the FINAL pass when pixelColumns is enabled
+            // Build multi-mesh geometry (one object per color layer)
             const buildPixelGeometry = async (
                 img: HTMLImageElement,
                 mode: 'preview' | 'final',
@@ -551,11 +319,13 @@ export default function ThreeDView({
                 const fullW = img.naturalWidth;
                 const fullH = img.naturalHeight;
                 const { minX, minY, boxW, boxH } = bbox;
+                
                 // Safety guard for enormous images
                 if (boxW * boxH > 1_200_000) {
                     console.warn('[3D] pixelColumns fallback to adaptive (image too large)');
                     return buildGeometry(img, chooseResolution(boxW, boxH), mode, bbox);
                 }
+
                 const canvas = document.createElement('canvas');
                 canvas.width = fullW;
                 canvas.height = fullH;
@@ -564,397 +334,319 @@ export default function ThreeDView({
                 ctx.drawImage(img, 0, 0, fullW, fullH);
                 const { data } = ctx.getImageData(0, 0, fullW, fullH);
 
-                // Create and assign a CanvasTexture for the pixelColumns path as well
-                try {
-                    const tex = new THREE.CanvasTexture(canvas);
-                    tex.magFilter = THREE.NearestFilter;
-                    tex.minFilter = THREE.NearestFilter;
-                    tex.generateMipmaps = false;
-                    tex.wrapS = THREE.ClampToEdgeWrapping;
-                    tex.wrapT = THREE.ClampToEdgeWrapping;
-                    tex.colorSpace = THREE.SRGBColorSpace;
-                    // Map UV 0..1 to the bbox region
-                    tex.repeat.set(boxW / fullW, boxH / fullH);
-                    tex.offset.set(minX / fullW, 1 - (minY + boxH) / fullH);
-                    tex.needsUpdate = true;
-                    const mat = materialRef.current;
-                    if (mat) {
-                        mat.map = tex;
-                        // Use alpha only in preview; for final we rely on geometry (no alphaMap)
-                        mat.alphaMap = mode === 'preview' ? tex : null;
-                        mat.transparent = mode === 'preview';
-                        mat.vertexColors = false;
-                        mat.flatShading = true;
-                        mat.needsUpdate = true;
-                    }
-                } catch {
-                    /* ignore */
-                }
-
-                // Precompute cumulative heights
-                const orderPositions = new Map<number, number>();
-                colorOrder.forEach((fi, pos) => orderPositions.set(fi, pos));
-                const cumulativePerOrderPos: number[] = [];
+                // Prepare layers
+                const cumulativeHeights: number[] = [];
                 let running = 0;
                 colorOrder.forEach((fi, pos) => {
                     const h = colorSliceHeights[fi] || 0;
                     const eff = pos === 0 ? Math.max(h, slicerFirstLayerHeight) : h;
                     running += eff;
-                    cumulativePerOrderPos[pos] = running;
+                    cumulativeHeights[pos] = running;
                 });
 
-                // Allocate arrays for pixel heights & colors
-                const pixHeights = new Float32Array(boxW * boxH);
-                const pixColors = new Uint8Array(boxW * boxH * 3);
+                // Clear current model
+                modelGroup.clear();
 
-                let lastYield = performance.now();
                 const YIELD_MS = 12;
-                for (let y = 0; y < boxH; y++) {
-                    for (let x = 0; x < boxW; x++) {
-                        const px = minX + x;
-                        const py = minY + y;
-                        const idx = (py * fullW + px) * 4;
-                        const r = data[idx];
-                        const g = data[idx + 1];
-                        const b = data[idx + 2];
-                        const a = data[idx + 3];
-                        const opaque = a > 0;
-                        let height = opaque ? baseSliceHeight : 0;
-                        if (opaque && swatches.length) {
-                            const swatchIndex = nearestSwatchIndex(r, g, b);
-                            if (swatchIndex !== -1) {
-                                const orderPos = orderPositions.get(swatchIndex);
-                                if (orderPos !== undefined)
-                                    height += cumulativePerOrderPos[orderPos] || 0;
-                            }
-                        }
-                        if (opaque && layerHeight > 0) {
-                            const delta = Math.max(0, height - slicerFirstLayerHeight);
-                            height = slicerFirstLayerHeight + Math.round(delta / layerHeight) * layerHeight;
-                        }
-                        pixHeights[y * boxW + x] = height;
-                        const base = (y * boxW + x) * 3;
-                        pixColors[base] = r;
-                        pixColors[base + 1] = g;
-                        pixColors[base + 2] = b;
-                    }
-                    if (performance.now() - lastYield > YIELD_MS) {
-                        await new Promise((r) => requestAnimationFrame(r));
-                        if (token !== buildTokenRef.current) return;
-                        lastYield = performance.now();
-                    }
-                }
-                if (token !== buildTokenRef.current) return;
+                let lastYield = performance.now();
 
-                // Geometry: one vertex per (boxW+1)*(boxH+1). Assign each vertex the height of its owning pixel (clamp to edge)
-                const geom = new THREE.PlaneGeometry(1, 1, boxW, boxH);
-                const posAttr = geom.getAttribute('position');
-                const vertexColors = new Float32Array(posAttr.count * 3);
-                const vertsPerRow = boxW + 1;
-                for (let vy = 0; vy < boxH + 1; vy++) {
-                    for (let vx = 0; vx < boxW + 1; vx++) {
-                        const px = Math.min(boxW - 1, vx);
-                        const py = Math.min(boxH - 1, vy);
-                        const hVal = pixHeights[py * boxW + px];
-                        const colorBase = (py * boxW + px) * 3;
-                        const vi = vy * vertsPerRow + vx;
-                        posAttr.setZ(vi, hVal);
-                        // Convert sRGB to linear color space for vertex colors
-                        const color = new THREE.Color();
-                        color.setRGB(
-                            pixColors[colorBase] / 255,
-                            pixColors[colorBase + 1] / 255,
-                            pixColors[colorBase + 2] / 255
-                        );
-                        color.convertSRGBToLinear();
-                        vertexColors[vi * 3] = color.r;
-                        vertexColors[vi * 3 + 1] = color.g;
-                        vertexColors[vi * 3 + 2] = color.b;
-                    }
-                    if (performance.now() - lastYield > YIELD_MS) {
-                        await new Promise((r) => requestAnimationFrame(r));
-                        if (token !== buildTokenRef.current) return;
-                        lastYield = performance.now();
-                    }
-                }
-                geom.setAttribute('color', new THREE.BufferAttribute(vertexColors, 3));
+                // Iterate each color layer and build a mesh
+                for (let i = 0; i < colorOrder.length; i++) {
+                    if (token !== buildTokenRef.current) return;
+                    
+                    const swatchIdx = colorOrder[i];
+                    if (!swatches[swatchIdx]) continue;
+                    const colorHex = swatches[swatchIdx].hex;
+                    const thickness = (i === 0 ? Math.max(colorSliceHeights[swatchIdx] || 0, slicerFirstLayerHeight) : (colorSliceHeights[swatchIdx] || 0));
+                    if (thickness <= 0.0001) continue; // Skip empty layers
+                    
+                    const baseZ = (i === 0 ? 0 : cumulativeHeights[i - 1]);
+                    
+                    // Identify active pixels for this layer
+                    // Pixel is active if its color index maps to a layer >= i
+                    const activePixels = new Uint8Array(boxW * boxH);
+                    let activeCount = 0;
 
-                // For preview mode we skip walls/bottom
-                let finalGeom: THREE.BufferGeometry = geom;
-                if (mode === 'final') {
-                    // Recompute vertex heights and colors from neighboring opaque cells to avoid boundary holes
-                    for (let vy = 0; vy < boxH + 1; vy++) {
-                        for (let vx = 0; vx < boxW + 1; vx++) {
-                            let hMax = 0;
-                            let colorR = 0,
-                                colorG = 0,
-                                colorB = 0;
-                            const consider = (cx: number, cy: number) => {
-                                if (cx >= 0 && cy >= 0 && cx < boxW && cy < boxH) {
-                                    const h = pixHeights[cy * boxW + cx];
-                                    if (h > hMax) {
-                                        hMax = h;
-                                        const base = (cy * boxW + cx) * 3;
-                                        colorR = pixColors[base] / 255;
-                                        colorG = pixColors[base + 1] / 255;
-                                        colorB = pixColors[base + 2] / 255;
-                                    }
-                                }
-                            };
-                            // Four adjacent cells around this vertex only
-                            consider(vx - 1, vy - 1);
-                            consider(vx - 1, vy);
-                            consider(vx, vy - 1);
-                            consider(vx, vy);
-                            const vi = vy * vertsPerRow + vx;
-                            posAttr.setZ(vi, hMax);
-                            if (hMax > 0) {
-                                // Convert sRGB to linear color space for vertex colors
-                                const color = new THREE.Color();
-                                color.setRGB(colorR, colorG, colorB);
-                                color.convertSRGBToLinear();
-                                vertexColors[vi * 3] = color.r;
-                                vertexColors[vi * 3 + 1] = color.g;
-                                vertexColors[vi * 3 + 2] = color.b;
-                            }
-                        }
-                    }
-                    posAttr.needsUpdate = true;
-
-                    // Expand boundary colors: for vertices still near-black, search outward for nearest opaque neighbor
-                    const blackEps = 1e-5;
-                    for (let vy = 0; vy < boxH + 1; vy++) {
-                        for (let vx = 0; vx < boxW + 1; vx++) {
-                            const vi = vy * vertsPerRow + vx;
-                            const r = vertexColors[vi * 3];
-                            const g = vertexColors[vi * 3 + 1];
-                            const b = vertexColors[vi * 3 + 2];
-                            // Still black after cell-max? Search outward up to radius 3 for nearest opaque
-                            if (r <= blackEps && g <= blackEps && b <= blackEps) {
-                                const px = Math.min(boxW - 1, Math.max(0, vx));
-                                const py = Math.min(boxH - 1, Math.max(0, vy));
-                                let found = false;
-                                for (let radius = 1; radius <= 3 && !found; radius++) {
-                                    for (let dy = -radius; dy <= radius && !found; dy++) {
-                                        for (let dx = -radius; dx <= radius && !found; dx++) {
-                                            const nx = px + dx;
-                                            const ny = py + dy;
-                                            if (nx >= 0 && nx < boxW && ny >= 0 && ny < boxH) {
-                                                if (pixHeights[ny * boxW + nx] > 0) {
-                                                    const base = (ny * boxW + nx) * 3;
-                                                    // Convert sRGB to linear color space for vertex colors
-                                                    const color = new THREE.Color();
-                                                    color.setRGB(
-                                                        pixColors[base] / 255,
-                                                        pixColors[base + 1] / 255,
-                                                        pixColors[base + 2] / 255
-                                                    );
-                                                    color.convertSRGBToLinear();
-                                                    vertexColors[vi * 3] = color.r;
-                                                    vertexColors[vi * 3 + 1] = color.g;
-                                                    vertexColors[vi * 3 + 2] = color.b;
-                                                    found = true;
-                                                }
-                                            }
-                                        }
+                    for (let y = 0; y < boxH; y++) {
+                        for (let x = 0; x < boxW; x++) {
+                            const px = minX + x;
+                            const py = minY + y;
+                            const idx = (py * fullW + px) * 4;
+                            const r = data[idx];
+                            const g = data[idx + 1];
+                            const b = data[idx + 2];
+                            const a = data[idx + 3];
+                            
+                            if (a > 0) {
+                                const sIdx = nearestSwatchIndex(r, g, b);
+                                if (sIdx !== -1) {
+                                    // Find which layer this swatch belongs to
+                                    // We need to know if the swatch's layer position >= i
+                                    // swatches are mapped to order by colorOrder array
+                                    // colorOrder[pos] = sIdx
+                                    // so we find pos where colorOrder[pos] == sIdx
+                                    const layerPos = colorOrder.indexOf(sIdx);
+                                    if (layerPos >= i) {
+                                        activePixels[y * boxW + x] = 1;
+                                        activeCount++;
                                     }
                                 }
                             }
                         }
-                    }
-                    const topPositions = new Float32Array(posAttr.count * 3);
-                    for (let i = 0; i < posAttr.count; i++) {
-                        topPositions[i * 3] = posAttr.getX(i);
-                        topPositions[i * 3 + 1] = posAttr.getY(i);
-                        topPositions[i * 3 + 2] = posAttr.getZ(i);
-                    }
-                    const bottomPositions = new Float32Array(posAttr.count * 3);
-                    bottomPositions.set(topPositions);
-                    // Slightly offset bottom to avoid z-fighting with near-zero top faces
-                    const Z_EPSILON = 1e-4;
-                    for (let i = 0; i < posAttr.count; i++) bottomPositions[i * 3 + 2] = -Z_EPSILON;
-                    const bottomColors = new Float32Array(vertexColors.length);
-                    bottomColors.set(vertexColors);
-
-                    // Fix boundary colors: extend opaque colors to transparent boundaries
-                    const vertsRowBoundary = boxW + 1;
-                    for (let vy = 0; vy < boxH + 1; vy++) {
-                        for (let vx = 0; vx < boxW + 1; vx++) {
-                            const vi = vy * vertsRowBoundary + vx;
-                            const px = Math.min(boxW - 1, vx);
-                            const py = Math.min(boxH - 1, vy);
-
-                            // If this vertex is transparent, try to use adjacent opaque color
-                            if (
-                                vertexColors[vi * 3] === 0 &&
-                                vertexColors[vi * 3 + 1] === 0 &&
-                                vertexColors[vi * 3 + 2] === 0
-                            ) {
-                                let foundColor = false;
-                                // Check adjacent cells for opaque color
-                                for (let dy = -1; dy <= 1 && !foundColor; dy++) {
-                                    for (let dx = -1; dx <= 1 && !foundColor; dx++) {
-                                        const nx = px + dx;
-                                        const ny = py + dy;
-                                        if (nx >= 0 && nx < boxW && ny >= 0 && ny < boxH) {
-                                            const nBase = (ny * boxW + nx) * 3;
-                                            if (
-                                                vertexColors[nBase] !== 0 ||
-                                                vertexColors[nBase + 1] !== 0 ||
-                                                vertexColors[nBase + 2] !== 0
-                                            ) {
-                                                bottomColors[vi * 3] = vertexColors[nBase];
-                                                bottomColors[vi * 3 + 1] = vertexColors[nBase + 1];
-                                                bottomColors[vi * 3 + 2] = vertexColors[nBase + 2];
-                                                foundColor = true;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                         if (performance.now() - lastYield > YIELD_MS) {
+                            await new Promise((r) => requestAnimationFrame(r));
+                            if (token !== buildTokenRef.current) return;
+                            lastYield = performance.now();
                         }
                     }
+
+                    if (activeCount === 0) continue;
+
+                    // Generate geometry for this layer
+                    // We reuse the wall-building logic from before
                     const widthSegments = boxW;
                     const heightSegments = boxH;
                     const vertsRow = widthSegments + 1;
+                    
+                    // Generate vertices
+                    // Each vertex height is either thickness (if owning pixel is active) or 0
+                    // Actually, we want to generate a solid mesh for the active region.
+                    // Vertices for the grid:
+                    // A vertex (vx, vy) is shared by 4 pixels. 
+                    // To get crisp walls, we usually duplicate vertices or use logic where 
+                    // vertex height is max of adjacent active pixels.
+                    // For "minecraft" style blocks, we need 4 verts per pixel?
+                    // Or shared verts where adjacent pixels are both active.
+                    // The previous logic used shared verts and handled walls at boundaries.
+                    // We will stick to shared verts grid (vertsRow * (heightSegments+1)).
+                    // Vertex is "high" (thickness) if any adjacent pixel is active?
+                    // No, that dilates the shape.
+                    // Previously: cellHeights[x,y] = height.
+                    // Vertex Z = max of 4 adjacent cells.
+                    // If we have an isolated active pixel, its 4 corners become high.
+                    // This forms a plateau.
+                    // If we have an isolated inactive pixel surrounded by active, its corners are high?
+                    // Yes, so the hole is closed? No.
+                    // Let's re-verify the "max of adjacent" logic.
+                    // If (x,y) is active (H=T). Neighbors inactive (H=0).
+                    // Verts at (x,y), (x+1,y), (x,y+1), (x+1,y+1) will all see T as max.
+                    // So the quad for pixel (x,y) is at height T.
+                    // The quads for neighbors are at height T (at the shared edge) and 0 (at outer edge).
+                    // This creates a slope.
+                    // BUT we used `flatShading` and logic to separate top/bottom/walls.
+                    // The previous logic: 
+                    // 1. Set Z for all verts based on cell heights (max).
+                    // 2. Identify opaque cells.
+                    // 3. Create Top Faces for opaque cells (using the Zs).
+                    // 4. Create Bottom Faces.
+                    // 5. Create Walls between opaque and non-opaque.
+                    // This works perfectly for a "layer slab".
+                    // The "slope" happens if we used the shared verts for everything.
+                    // But we separate faces. Top face uses the high verts.
+                    // Does a neighbor (inactive) pixel use the high verts? 
+                    // If neighbor is inactive, we don't generate top/bottom faces for it.
+                    // So the slope geometry is never generated as a top face.
+                    // The wall is generated at the boundary.
+                    // So this logic holds.
+                    
+                    const numVerts = (widthSegments + 1) * (heightSegments + 1);
+                    const topZs = new Float32Array(numVerts);
+                    
+                    for (let vy = 0; vy <= heightSegments; vy++) {
+                         for (let vx = 0; vx <= widthSegments; vx++) {
+                             let isActiveVert = false;
+                             // Check 4 neighbors
+                             const check = (cx: number, cy: number) => {
+                                 if (cx >= 0 && cy >= 0 && cx < widthSegments && cy < heightSegments) {
+                                     if (activePixels[cy * widthSegments + cx]) isActiveVert = true;
+                                 }
+                             };
+                             check(vx - 1, vy - 1);
+                             check(vx - 1, vy);
+                             check(vx, vy - 1);
+                             check(vx, vy);
+                             topZs[vy * vertsRow + vx] = isActiveVert ? thickness : 0;
+                         }
+                    }
+
+                    // Build buffers
                     const topIndices: number[] = [];
                     const bottomIndices: number[] = [];
-                    const HEIGHT_EPS = 1e-6;
+                    
                     for (let y = 0; y < heightSegments; y++) {
                         for (let x = 0; x < widthSegments; x++) {
-                            const cellIdx = y * boxW + x;
-                            if (pixHeights[cellIdx] <= HEIGHT_EPS) continue;
+                            if (!activePixels[y * widthSegments + x]) continue;
                             const a = y * vertsRow + x;
                             const b = a + 1;
                             const c = a + vertsRow;
                             const d = c + 1;
-                            // Top face (CCW when viewed from above)
-                            topIndices.push(a, c, b, b, c, d);
-                            // Bottom face (CW when viewed from above, reversed winding)
-                            bottomIndices.push(a, b, c, b, d, c);
+                            // Top faces (CCW: a, b, c and b, d, c)
+                            topIndices.push(a, b, c, b, d, c);
+                            // Bottom faces (CW: a, c, b and b, c, d)
+                            bottomIndices.push(a, c, b, b, c, d);
                         }
                     }
-                    const bottomOffset = posAttr.count;
-                    const indices: number[] = [...topIndices];
-                    for (let i = 0; i < bottomIndices.length; i++) {
-                        indices.push(bottomOffset + bottomIndices[i]);
-                    }
-                    // Deduplicate walls per edge to avoid z-fighting stripes
-                    const addedWallEdges = new Set<string>();
-                    const pushWall = (tA: number, tB: number) => {
-                        const a = Math.min(tA, tB);
-                        const b = Math.max(tA, tB);
-                        const key = `${a}-${b}`;
-                        if (addedWallEdges.has(key)) return;
-                        addedWallEdges.add(key);
-                        const bA = tA + bottomOffset;
-                        const bB = tB + bottomOffset;
-                        indices.push(tA, bA, bB, tA, bB, tB);
+
+                    // Walls
+                    const wallIndices: number[] = [];
+                    const numV = numVerts; // convenient alias
+
+                    // Helper to push a quad (2 triangles)
+                    // v0, v1, v2, v3 in CCW order
+                    const pushQuad = (v0: number, v1: number, v2: number, v3: number) => {
+                        wallIndices.push(v0, v1, v2);
+                        wallIndices.push(v0, v2, v3);
                     };
-
-                    // Build walls strictly from pixel occupancy (opaque vs transparent) to avoid banding
-                    const isOpaque = (cx: number, cy: number) =>
-                        cx >= 0 &&
-                        cy >= 0 &&
-                        cx < boxW &&
-                        cy < boxH &&
-                        pixHeights[cy * boxW + cx] > HEIGHT_EPS;
-
-                    // Vertical edges: between column x-1 and x for each row y
-                    for (let x = 0; x <= boxW; x++) {
-                        for (let y = 0; y < boxH; y++) {
-                            const leftOpaque = isOpaque(x - 1, y);
-                            const rightOpaque = isOpaque(x, y);
-                            if (leftOpaque !== rightOpaque) {
-                                const tA = y * vertsRow + x;
-                                const tB = (y + 1) * vertsRow + x;
-                                pushWall(tA, tB);
-                            }
+                    
+                    for (let x = 0; x <= widthSegments; x++) {
+                        for (let y = 0; y < heightSegments; y++) {
+                             const l = (x > 0) ? activePixels[y * widthSegments + x - 1] : 0;
+                             const r = (x < widthSegments) ? activePixels[y * widthSegments + x] : 0;
+                             
+                             if (!!l !== !!r) {
+                                 // Vertical segment at x, from y to y+1
+                                 const tA = y * vertsRow + x;       // Top, y
+                                 const tB = (y + 1) * vertsRow + x; // Top, y+1
+                                 const bA = tA + numV;              // Bottom, y
+                                 const bB = tB + numV;              // Bottom, y+1
+                                 
+                                 if (l) {
+                                     // Right Wall of l (Normal +X)
+                                     // Winding: bA, bB, tB, tA
+                                     pushQuad(bA, bB, tB, tA);
+                                 } else {
+                                     // Left Wall of r (Normal -X)
+                                     // Winding: bB, bA, tA, tB
+                                     pushQuad(bB, bA, tA, tB);
+                                 }
+                             }
                         }
                     }
-                    // Horizontal edges: between row y-1 and y for each column x
-                    for (let y = 0; y <= boxH; y++) {
-                        for (let x = 0; x < boxW; x++) {
-                            const topOpaque = isOpaque(x, y - 1);
-                            const bottomOpaque = isOpaque(x, y);
-                            if (topOpaque !== bottomOpaque) {
-                                const tA = y * vertsRow + x;
-                                const tB = y * vertsRow + (x + 1);
-                                pushWall(tA, tB);
-                            }
+                    for (let y = 0; y <= heightSegments; y++) {
+                        for (let x = 0; x < widthSegments; x++) {
+                             const t = (y > 0) ? activePixels[(y - 1) * widthSegments + x] : 0;
+                             const b = (y < heightSegments) ? activePixels[y * widthSegments + x] : 0;
+                             
+                             if (!!t !== !!b) {
+                                 // Horizontal segment at y, from x to x+1
+                                 const tA = y * vertsRow + x;       // Top, x
+                                 const tB = y * vertsRow + (x + 1); // Top, x+1
+                                 const bA = tA + numV;              // Bottom, x
+                                 const bB = tB + numV;              // Bottom, x+1
+                                 
+                                 if (t) {
+                                     // Bottom Wall of t (Normal +Y)
+                                     // Winding: bB, bA, tA, tB
+                                     pushQuad(bB, bA, tA, tB);
+                                 } else {
+                                     // Top Wall of b (Normal -Y)
+                                     // Winding: bA, bB, tB, tA
+                                     pushQuad(bA, bB, tB, tA);
+                                 }
+                             }
                         }
                     }
 
-                    const combinedPositions = new Float32Array(topPositions.length * 2);
-                    combinedPositions.set(topPositions, 0);
-                    combinedPositions.set(bottomPositions, topPositions.length);
-                    const combinedColors = new Float32Array(vertexColors.length * 2);
-                    combinedColors.set(vertexColors, 0);
-                    combinedColors.set(bottomColors, vertexColors.length);
-                    finalGeom = new THREE.BufferGeometry();
-                    finalGeom.setAttribute(
-                        'position',
-                        new THREE.BufferAttribute(combinedPositions, 3)
-                    );
-                    // Build UVs for grid: map XY from -0.5..0.5 to 0..1 for the top and bottom
-                    const vertCount = posAttr.count;
-                    const uvs = new Float32Array(vertCount * 2 * 2); // top + bottom
-                    const vertsRowGrid = boxW + 1;
-                    for (let vy = 0; vy < boxH + 1; vy++) {
-                        for (let vx = 0; vx < boxW + 1; vx++) {
-                            const vi = vy * vertsRowGrid + vx;
-                            const u = vx / boxW;
-                            const v = 1 - vy / boxH; // flip Y so texture appears upright
-                            uvs[vi * 2] = u;
-                            uvs[vi * 2 + 1] = v;
-                            // duplicate for bottom verts
-                            const bi = vi + vertCount;
-                            uvs[bi * 2] = u;
-                            uvs[bi * 2 + 1] = v;
-                        }
+                    // Construct final geometry
+                    const positions = new Float32Array(numVerts * 2 * 3);
+                    
+                    for (let i = 0; i < numVerts; i++) {
+                        const vx = i % vertsRow;
+                        const vy = Math.floor(i / vertsRow);
+                        // Top
+                        positions[i * 3 + 0] = vx;
+                        positions[i * 3 + 1] = vy;
+                        positions[i * 3 + 2] = topZs[i]; // thickness or 0
+                        // Bottom
+                        const bi = i + numVerts;
+                        positions[bi * 3 + 0] = vx;
+                        positions[bi * 3 + 1] = vy;
+                        positions[bi * 3 + 2] = 0; // base of this layer slab is local 0
                     }
-                    finalGeom.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-                    finalGeom.setAttribute('color', new THREE.BufferAttribute(combinedColors, 3));
-                    finalGeom.setIndex(indices);
-                    // Convert to non-indexed to avoid driver 16-bit index limits across devices
-                    const indexed = finalGeom;
-                    finalGeom = indexed.toNonIndexed();
-                    indexed.dispose();
-                    finalGeom.computeVertexNormals();
-                    geom.dispose();
+
+                    // Indices
+                    const finalIndices: number[] = [];
+                    // Top faces
+                    for (let k = 0; k < topIndices.length; k++) {
+                        finalIndices.push(topIndices[k]);
+                    }
+                    // Bottom faces (offset by numVerts)
+                    for (let k = 0; k < bottomIndices.length; k++) {
+                        finalIndices.push(bottomIndices[k] + numVerts);
+                    }
+                    // Walls
+                    for (let k = 0; k < wallIndices.length; k++) {
+                        finalIndices.push(wallIndices[k]);
+                    }
+
+                    const geom = new THREE.BufferGeometry();
+                    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                    geom.setIndex(finalIndices);
+                    // No UVs needed for solid color? Or maybe for debug. 
+                    // No vertex colors needed, we use material color.
+                    geom.computeVertexNormals();
+                    
+                    const mat = new THREE.MeshStandardMaterial({
+                        color: colorHex,
+                        roughness: 0.5,
+                        metalness: 0.1,
+                        side: THREE.DoubleSide 
+                    });
+                    
+                    const mesh = new THREE.Mesh(geom, mat);
+                    mesh.scale.set(pixelSize, pixelSize, heightScale);
+                    mesh.position.z = baseZ * heightScale;
+                    
+                    // Center the group? No, we didn't center before.
+                    
+                    modelGroup.add(mesh);
+                    
+                    if (performance.now() - lastYield > YIELD_MS) {
+                        await new Promise((r) => requestAnimationFrame(r));
+                        if (token !== buildTokenRef.current) return;
+                        lastYield = performance.now();
+                    }
                 }
+
                 if (token !== buildTokenRef.current) return;
-                // Swap onto mesh
-                const mesh = meshRef.current;
-                if (!mesh) return;
-                const old = mesh.geometry as THREE.BufferGeometry;
-                mesh.geometry = finalGeom;
-                old.dispose();
 
-                // Use vertex colors (no texture) for final solid geometry to avoid undefined UVs on walls
-                const mat = materialRef.current;
-                if (mat) {
-                    mat.map = null;
-                    mat.alphaMap = null;
-                    mat.transparent = false;
-                    mat.vertexColors = true;
-                    mat.needsUpdate = true;
-                }
+                try {
+                    (
+                        window as unknown as { __KROMACUT_LAST_MESH?: THREE.Object3D }
+                    ).__KROMACUT_LAST_MESH = modelGroup;
+                } catch { /* ignore */ }
 
+                // Calculate dimensions
+                const box = new THREE.Box3().setFromObject(modelGroup);
+                const maxDepth = box.max.z - box.min.z;
                 const finalW = boxW;
                 const finalH = boxH;
-                mesh.scale.set(finalW * pixelSize, finalH * pixelSize, heightScale);
-
-                // Calculate maximum height (depth) of the model
-                const box = new THREE.Box3().setFromObject(mesh);
-                const maxDepth = box.max.z - box.min.z;
-
-                // Update model dimensions for display
                 setModelDimensions({
                     width: finalW * pixelSize,
                     height: finalH * pixelSize,
                     depth: maxDepth,
                 });
+                
+                // Auto-frame
+                try {
+                    const camera = cameraRef.current;
+                    const controls = controlsRef.current;
+                    if (camera && controls) {
+                        const sphere = new THREE.Sphere();
+                        box.getBoundingSphere(sphere);
+                         // ... same framing logic ...
+                        const fov = (camera.fov * Math.PI) / 180;
+                        const distance = sphere.radius / Math.sin(fov / 2);
+                        const dir = new THREE.Vector3(0.9, 0.8, 1).normalize();
+                        const camPos = sphere.center.clone().add(dir.multiplyScalar(distance * 1.35));
+                        camera.position.copy(camPos);
+                        controls.target.copy(sphere.center);
+                        camera.near = Math.max(0.01, sphere.radius * 0.01);
+                        camera.far = sphere.radius * 20;
+                        camera.updateProjectionMatrix();
+                        controls.update();
+                    }
+                } catch { /* ignore */ }
             };
 
             (async () => {
@@ -986,29 +678,23 @@ export default function ThreeDView({
                     }
                 }
                 if (maxX < minX || maxY < minY) {
-                    // no opaque pixels — fallback to full image
-                    minX = 0;
-                    minY = 0;
-                    maxX = w - 1;
-                    maxY = h - 1;
+                    minX = 0; minY = 0; maxX = w - 1; maxY = h - 1;
                 }
                 const boxW = maxX - minX + 1;
                 const boxH = maxY - minY + 1;
                 const fullRes = chooseResolution(boxW, boxH);
                 const previewRes = Math.max(32, Math.round(fullRes / 3));
                 const bbox = { minX, minY, boxW, boxH };
-                // Quick preview using bbox
-                if (pixelColumns) {
-                    // For performance, preview still uses adaptive sampling
-                    await buildGeometry(img, previewRes, 'preview', bbox);
-                } else {
-                    await buildGeometry(img, previewRes, 'preview', bbox);
-                }
+                
+                // Always use preview build first
+                await buildGeometry(img, previewRes, 'preview', bbox);
+                
                 if (token !== buildTokenRef.current) {
                     setIsBuilding(false);
                     return;
                 }
-                // Schedule final build in an idle callback and await it so we can clear the building state
+                
+                // Schedule final build
                 await new Promise<void>((res) =>
                     requestIdle(async () => {
                         if (token !== buildTokenRef.current) {
@@ -1022,7 +708,7 @@ export default function ThreeDView({
                 );
                 if (token === buildTokenRef.current) setIsBuilding(false);
             })();
-        }, 120); // 120ms debounce
+        }, 120);
 
         return () => {
             if (debounceTimerRef.current) window.clearTimeout(debounceTimerRef.current);
@@ -1043,7 +729,7 @@ export default function ThreeDView({
         cameraRef,
         controlsRef,
         materialRef,
-        meshRef,
+        modelGroupRef,
     ]);
 
     return (

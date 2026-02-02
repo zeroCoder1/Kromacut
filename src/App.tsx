@@ -18,7 +18,8 @@ import Header from './components/Header';
 import ModeTabs from './components/ModeTabs';
 import PreviewActions from './components/PreviewActions';
 import { useDropzone } from './hooks/useDropzone';
-import { exportMeshToStlBlob } from './lib/exportStl';
+import { exportObjectToStlBlob } from './lib/exportStl';
+import { exportObjectTo3MFBlob } from './lib/export3mf';
 import { useAppHandlers } from './hooks/useAppHandlers';
 import ResizableSplitter from './components/ResizableSplitter';
 import { ControlsPanel } from './components/ControlsPanel';
@@ -133,7 +134,7 @@ function App(): React.ReactElement | null {
     const layoutRef = useRef<HTMLDivElement | null>(null);
 
     const dropzone = useDropzone({ enabled: mode === '2d', onFile: handleFiles });
-    const { onExportImage, onExportStl, onSwatchApply, onSwatchDelete } = useAppHandlers({
+    const { onExportImage, onExportStl, onExport3MF, onSwatchApply, onSwatchDelete } = useAppHandlers({
         canvasPreviewRef,
         imageSrc,
         invalidate,
@@ -141,7 +142,12 @@ function App(): React.ReactElement | null {
         setExportingSTL,
         setExportProgress,
         exportingSTL,
-        exportMeshToStlBlob,
+        exportObjectToStlBlob,
+        exportObjectTo3MFBlob: (obj) =>
+            exportObjectTo3MFBlob(obj, {
+                layerHeight: threeDState.layerHeight,
+                firstLayerHeight: threeDState.slicerFirstLayerHeight,
+            }),
         applyQuantize,
         swatches,
     });
@@ -334,6 +340,7 @@ function App(): React.ReactElement | null {
                                 onClear={clear}
                                 onExportImage={onExportImage}
                                 onExportStl={onExportStl}
+                                onExport3MF={onExport3MF}
                             />
                         </div>
                     </main>
