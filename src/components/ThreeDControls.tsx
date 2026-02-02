@@ -237,15 +237,18 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         // We report the layer whose top is at or above this height, matching slicer UI labels.
         const effFirst = Math.max(0, slicerFirstLayerHeight || 0);
         let layerNum = 1;
+        let displayHeight = heightAt; // fallback
         if (layerHeight > 0) {
             const delta = Math.max(0, heightAt - effFirst);
-            layerNum = 1 + Math.ceil(delta / layerHeight);
+            layerNum = 2 + Math.round(delta / layerHeight);
+            // Display height corresponds to the Z height of the layer in slicer
+            displayHeight = effFirst + (layerNum - 1) * layerHeight;
         }
         swapPlan.push({
             type: 'swap',
             swatch: sw,
             layer: layerNum,
-            height: heightAt,
+            height: displayHeight,
         });
     }
 
@@ -328,17 +331,36 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         colorOrder.length === filtered.length ? colorOrder : filtered.map((_, i) => i);
 
     // Ensure the currently-first color in display order cannot be below the slicer first layer height
+    // AND all colors stay aligned with valid layer boundaries.
     useEffect(() => {
         if (displayOrder.length === 0) return;
-        const firstFi = displayOrder[0];
-        const current = colorSliceHeights[firstFi];
-        const minFirst = Math.max(layerHeight, slicerFirstLayerHeight);
-        if (typeof current === 'number' && isFinite(current) && current < minFirst) {
-            setColorSliceHeights((prev) => {
-                const next = prev.slice();
-                next[firstFi] = minFirst;
-                return next;
-            });
+
+        let changed = false;
+        const next = colorSliceHeights.slice();
+
+        displayOrder.forEach((fi, idx) => {
+            const current = next[fi];
+            if (typeof current !== 'number' || !isFinite(current)) return;
+
+            let snapped: number;
+            if (idx === 0) {
+                const minFirst = Math.max(layerHeight, slicerFirstLayerHeight);
+                const delta = Math.max(0, current - minFirst);
+                snapped = minFirst + Math.round(delta / layerHeight) * layerHeight;
+            } else {
+                snapped = Math.round(current / layerHeight) * layerHeight;
+                snapped = Math.max(layerHeight, snapped);
+            }
+
+            snapped = Number(snapped.toFixed(8));
+            if (Math.abs(current - snapped) > 1e-6) {
+                next[fi] = snapped;
+                changed = true;
+            }
+        });
+
+        if (changed) {
+            setColorSliceHeights(next);
         }
     }, [displayOrder, colorSliceHeights, layerHeight, slicerFirstLayerHeight]);
 

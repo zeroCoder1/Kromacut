@@ -6,6 +6,7 @@ interface ThreeDViewProps {
     imageSrc?: string | null;
     baseSliceHeight: number; // mm
     layerHeight: number; // mm (granularity)
+    slicerFirstLayerHeight?: number; // mm
     colorSliceHeights: number[]; // per color height increments (mm)
     colorOrder: number[]; // ordering (indices into swatches)
     swatches: { hex: string; a: number }[]; // filtered (non-transparent) swatches in original order
@@ -56,6 +57,7 @@ export default function ThreeDView({
     imageSrc,
     baseSliceHeight,
     layerHeight,
+    slicerFirstLayerHeight = 0,
     colorSliceHeights,
     colorOrder,
     swatches,
@@ -220,7 +222,9 @@ export default function ThreeDView({
                 const cumulativePerOrderPos: number[] = [];
                 let running = 0;
                 colorOrder.forEach((fi, pos) => {
-                    running += colorSliceHeights[fi] || 0;
+                    const h = colorSliceHeights[fi] || 0;
+                    const eff = pos === 0 ? Math.max(h, slicerFirstLayerHeight) : h;
+                    running += eff;
                     cumulativePerOrderPos[pos] = running;
                 });
 
@@ -255,7 +259,10 @@ export default function ThreeDView({
                                 height += cumulativePerOrderPos[orderPos] || 0;
                         }
                     }
-                    if (layerHeight > 0) height = Math.round(height / layerHeight) * layerHeight;
+                    if (opaque && layerHeight > 0) {
+                        const delta = Math.max(0, height - slicerFirstLayerHeight);
+                        height = slicerFirstLayerHeight + Math.round(delta / layerHeight) * layerHeight;
+                    }
                     idxPos.setZ(vi, height);
 
                     if (performance.now() - lastYield > YIELD_EVERY_MS) {
@@ -590,7 +597,9 @@ export default function ThreeDView({
                 const cumulativePerOrderPos: number[] = [];
                 let running = 0;
                 colorOrder.forEach((fi, pos) => {
-                    running += colorSliceHeights[fi] || 0;
+                    const h = colorSliceHeights[fi] || 0;
+                    const eff = pos === 0 ? Math.max(h, slicerFirstLayerHeight) : h;
+                    running += eff;
                     cumulativePerOrderPos[pos] = running;
                 });
 
@@ -619,8 +628,10 @@ export default function ThreeDView({
                                     height += cumulativePerOrderPos[orderPos] || 0;
                             }
                         }
-                        if (layerHeight > 0)
-                            height = Math.round(height / layerHeight) * layerHeight;
+                        if (opaque && layerHeight > 0) {
+                            const delta = Math.max(0, height - slicerFirstLayerHeight);
+                            height = slicerFirstLayerHeight + Math.round(delta / layerHeight) * layerHeight;
+                        }
                         pixHeights[y * boxW + x] = height;
                         const base = (y * boxW + x) * 3;
                         pixColors[base] = r;
@@ -1020,6 +1031,7 @@ export default function ThreeDView({
         imageSrc,
         baseSliceHeight,
         layerHeight,
+        slicerFirstLayerHeight,
         colorSliceHeights,
         colorOrder,
         swatches,
