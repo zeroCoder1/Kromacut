@@ -298,6 +298,7 @@ function App(): React.ReactElement | null {
                                     imageSrc={imageSrc}
                                     baseSliceHeight={0}
                                     layerHeight={threeDState.layerHeight}
+                                    slicerFirstLayerHeight={threeDState.slicerFirstLayerHeight}
                                     colorSliceHeights={threeDState.colorSliceHeights}
                                     colorOrder={threeDState.colorOrder}
                                     swatches={threeDState.filteredSwatches}
