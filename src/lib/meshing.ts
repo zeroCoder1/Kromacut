@@ -1,4 +1,3 @@
-
 export interface MeshData {
     positions: Float32Array;
     indices: number[];
@@ -6,9 +5,14 @@ export interface MeshData {
 
 /**
  * Generates an optimized 3D mesh for a layer of voxel-like pixels using Maximal Rectangle Greedy Meshing.
- * This approach minimizes the triangle count by merging active regions into large rectangles
- * and merging wall segments into the longest possible strips.
- * 
+ * This approach minimizes the triangle count by merging active regions into large rectangles.
+ *
+ * T-Junction Prevention: Walls are generated in a separate global pass to ensure all wall
+ * vertices align properly, preventing non-manifold edges that cause slicer artifacts.
+ *
+ * Coordinate system: X+ right, Y+ down (image coords), Z+ up
+ * All faces use CCW winding when viewed from outside (right-hand rule for outward normals)
+ *
  * @param activePixels Row-major array where >0 indicates presence of a pixel
  * @param width Width of the pixel grid
  * @param height Height of the pixel grid
@@ -53,12 +57,21 @@ export function generateGreedyMesh(
         return idx;
     };
 
-    const addQuadIndices = (v0: number, v1: number, v2: number, v3: number) => {
+    // Add a quad with CCW winding (v0 -> v1 -> v2 -> v3 should be CCW when viewed from outside)
+    const addQuadCCW = (v0: number, v1: number, v2: number, v3: number) => {
+        // Two triangles: (v0, v1, v2) and (v0, v2, v3)
         indices.push(v0, v1, v2);
         indices.push(v0, v2, v3);
     };
 
-    // --- Greedy Meshing ---
+    // --- Collect all greedy rectangles first ---
+    interface Rect {
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+    }
+    const rectangles: Rect[] = [];
     const visited = new Uint8Array(width * height);
 
     for (let y = 0; y < height; y++) {
@@ -67,7 +80,11 @@ export function generateGreedyMesh(
             if (activePixels[idx] && !visited[idx]) {
                 // 1. Find max width
                 let w = 1;
-                while (x + w < width && activePixels[y * width + (x + w)] && !visited[y * width + (x + w)]) {
+                while (
+                    x + w < width &&
+                    activePixels[y * width + (x + w)] &&
+                    !visited[y * width + (x + w)]
+                ) {
                     w++;
                 }
 
@@ -93,143 +110,228 @@ export function generateGreedyMesh(
                     }
                 }
 
-                // 4. Generate Top and Bottom Faces
-                // TL(x,y), TR(x+w, y), BR(x+w, y+h), BL(x, y+h)
-                
-                // Top (CCW)
-                const tTL = getOrAddVertex(x, y, true);
-                const tTR = getOrAddVertex(x + w, y, true);
-                const tBR = getOrAddVertex(x + w, y + h, true);
-                const tBL = getOrAddVertex(x, y + h, true);
-                addQuadIndices(tTL, tTR, tBR, tBL);
-
-                // Bottom (CW -> CCW from bottom)
-                const bTL = getOrAddVertex(x, y, false);
-                const bTR = getOrAddVertex(x + w, y, false);
-                const bBR = getOrAddVertex(x + w, y + h, false);
-                const bBL = getOrAddVertex(x, y + h, false);
-                addQuadIndices(bTL, bBL, bBR, bTR);
-
-                // 5. Generate Walls with Merging
-                // We iterate along the perimeter and identify "runs" of inactive neighbors
-                
-                // North Edge (y) - Check neighbor at y-1
-                // Iterate k from 0 to w.
-                let runStart = -1;
-                for (let k = 0; k < w; k++) {
-                    const northActive = (y > 0) ? !!activePixels[(y - 1) * width + (x + k)] : false;
-                    if (!northActive) {
-                        if (runStart === -1) runStart = k;
-                    } else {
-                        if (runStart !== -1) {
-                            // End of run, emit wall from runStart to k
-                            // Wall from (x+runStart) to (x+k) at y
-                            const vTR_ = getOrAddVertex(x + k, y, true);
-                            const vTL_ = getOrAddVertex(x + runStart, y, true);
-                            const vBL_ = getOrAddVertex(x + runStart, y, false);
-                            const vBR_ = getOrAddVertex(x + k, y, false);
-                            addQuadIndices(vTR_, vTL_, vBL_, vBR_);
-                            runStart = -1;
-                        }
-                    }
-                }
-                if (runStart !== -1) {
-                    // Emit remaining run
-                    const vTR_ = getOrAddVertex(x + w, y, true);
-                    const vTL_ = getOrAddVertex(x + runStart, y, true);
-                    const vBL_ = getOrAddVertex(x + runStart, y, false);
-                    const vBR_ = getOrAddVertex(x + w, y, false);
-                    addQuadIndices(vTR_, vTL_, vBL_, vBR_);
-                }
-
-                // South Edge (y+h) - Check neighbor at y+h
-                runStart = -1;
-                for (let k = 0; k < w; k++) {
-                    const southActive = (y + h < height) ? !!activePixels[(y + h) * width + (x + k)] : false;
-                    if (!southActive) {
-                        if (runStart === -1) runStart = k;
-                    } else {
-                        if (runStart !== -1) {
-                            // Wall from (x+runStart) to (x+k) at y+h
-                            // South Wall (+Y): TL->TR->BR->BL
-                            const vTL_ = getOrAddVertex(x + runStart, y + h, true);
-                            const vTR_ = getOrAddVertex(x + k, y + h, true);
-                            const vBR_ = getOrAddVertex(x + k, y + h, false);
-                            const vBL_ = getOrAddVertex(x + runStart, y + h, false);
-                            addQuadIndices(vTL_, vTR_, vBR_, vBL_);
-                            runStart = -1;
-                        }
-                    }
-                }
-                if (runStart !== -1) {
-                    const vTL_ = getOrAddVertex(x + runStart, y + h, true);
-                    const vTR_ = getOrAddVertex(x + w, y + h, true);
-                    const vBR_ = getOrAddVertex(x + w, y + h, false);
-                    const vBL_ = getOrAddVertex(x + runStart, y + h, false);
-                    addQuadIndices(vTL_, vTR_, vBR_, vBL_);
-                }
-
-                // West Edge (x) - Check neighbor at x-1
-                runStart = -1;
-                for (let k = 0; k < h; k++) {
-                    const westActive = (x > 0) ? !!activePixels[(y + k) * width + (x - 1)] : false;
-                    if (!westActive) {
-                        if (runStart === -1) runStart = k;
-                    } else {
-                        if (runStart !== -1) {
-                            // Wall from y+runStart to y+k at x
-                            // West Wall (-X): TL->TR->BR->BL (viewed from outside)
-                            // (x, y+runStart, T) -> (x, y+k, T) -> (x, y+k, B) -> (x, y+runStart, B)
-                            const vTL_ = getOrAddVertex(x, y + runStart, true);
-                            const vTR_ = getOrAddVertex(x, y + k, true);
-                            const vBR_ = getOrAddVertex(x, y + k, false);
-                            const vBL_ = getOrAddVertex(x, y + runStart, false);
-                            addQuadIndices(vTL_, vTR_, vBR_, vBL_);
-                            runStart = -1;
-                        }
-                    }
-                }
-                if (runStart !== -1) {
-                    const vTL_ = getOrAddVertex(x, y + runStart, true);
-                    const vTR_ = getOrAddVertex(x, y + h, true);
-                    const vBR_ = getOrAddVertex(x, y + h, false);
-                    const vBL_ = getOrAddVertex(x, y + runStart, false);
-                    addQuadIndices(vTL_, vTR_, vBR_, vBL_);
-                }
-
-                // East Edge (x+w) - Check neighbor at x+w
-                runStart = -1;
-                for (let k = 0; k < h; k++) {
-                    const eastActive = (x + w < width) ? !!activePixels[(y + k) * width + (x + w)] : false;
-                    if (!eastActive) {
-                        if (runStart === -1) runStart = k;
-                    } else {
-                        if (runStart !== -1) {
-                            // Wall from y+runStart to y+k at x+w
-                            // East Wall (+X): TL->TR->BR->BL
-                            // (x+w, y+k, T) -> (x+w, y+runStart, T) -> (x+w, y+runStart, B) -> (x+w, y+k, B)
-                            const vTL_ = getOrAddVertex(x + w, y + k, true);
-                            const vTR_ = getOrAddVertex(x + w, y + runStart, true);
-                            const vBR_ = getOrAddVertex(x + w, y + runStart, false);
-                            const vBL_ = getOrAddVertex(x + w, y + k, false);
-                            addQuadIndices(vTL_, vTR_, vBR_, vBL_);
-                            runStart = -1;
-                        }
-                    }
-                }
-                if (runStart !== -1) {
-                    const vTL_ = getOrAddVertex(x + w, y + h, true);
-                    const vTR_ = getOrAddVertex(x + w, y + runStart, true);
-                    const vBR_ = getOrAddVertex(x + w, y + runStart, false);
-                    const vBL_ = getOrAddVertex(x + w, y + h, false);
-                    addQuadIndices(vTL_, vTR_, vBR_, vBL_);
-                }
+                rectangles.push({ x, y, w, h });
             }
         }
     }
 
+    // --- Build global vertex requirement sets for walls ---
+    // These track all x-coordinates needed at each y for horizontal edges
+    // and all y-coordinates needed at each x for vertical edges
+    // This ensures walls are subdivided at T-junction points
+
+    // For north/south walls: verticesAtY[y] = Set of x-coordinates where vertices exist
+    const verticesAtY = new Map<number, Set<number>>();
+    // For west/east walls: verticesAtX[x] = Set of y-coordinates where vertices exist
+    const verticesAtX = new Map<number, Set<number>>();
+
+    // First pass: collect all rectangle corner vertices
+    for (const rect of rectangles) {
+        const { x, y, w, h } = rect;
+
+        // Add vertices at all four corners for each y-coordinate
+        for (const yCoord of [y, y + h]) {
+            if (!verticesAtY.has(yCoord)) verticesAtY.set(yCoord, new Set());
+            verticesAtY.get(yCoord)!.add(x);
+            verticesAtY.get(yCoord)!.add(x + w);
+        }
+
+        // Add vertices at all four corners for each x-coordinate
+        for (const xCoord of [x, x + w]) {
+            if (!verticesAtX.has(xCoord)) verticesAtX.set(xCoord, new Set());
+            verticesAtX.get(xCoord)!.add(y);
+            verticesAtX.get(xCoord)!.add(y + h);
+        }
+    }
+
+    // --- Generate Top and Bottom Faces for each rectangle ---
+    for (const rect of rectangles) {
+        const { x, y, w, h } = rect;
+
+        // Top face (normal +Z):
+        const tTL = getOrAddVertex(x, y, true);
+        const tTR = getOrAddVertex(x + w, y, true);
+        const tBR = getOrAddVertex(x + w, y + h, true);
+        const tBL = getOrAddVertex(x, y + h, true);
+        addQuadCCW(tTL, tTR, tBR, tBL);
+
+        // Bottom face (normal -Z):
+        const bTL = getOrAddVertex(x, y, false);
+        const bTR = getOrAddVertex(x + w, y, false);
+        const bBR = getOrAddVertex(x + w, y + h, false);
+        const bBL = getOrAddVertex(x, y + h, false);
+        addQuadCCW(bTL, bBL, bBR, bTR);
+    }
+
+    // --- Global Wall Generation ---
+    // Collect all wall segments at pixel granularity, then merge respecting all vertices
+
+    // North walls (facing -Y): edges at y where pixel[y] is active but pixel[y-1] is not
+    // Map: y -> sorted list of x-coordinates needing north walls
+    const northWalls = new Map<number, number[]>();
+    // South walls (facing +Y): edges at y where pixel[y-1] is active but pixel[y] is not
+    const southWalls = new Map<number, number[]>();
+    // West walls (facing -X): edges at x where pixel[x] is active but pixel[x-1] is not
+    const westWalls = new Map<number, number[]>();
+    // East walls (facing +X): edges at x where pixel[x-1] is active but pixel[x] is not
+    const eastWalls = new Map<number, number[]>();
+
+    // Scan for all wall edges
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            if (!activePixels[y * width + x]) continue;
+
+            // North wall needed if no neighbor above
+            if (y === 0 || !activePixels[(y - 1) * width + x]) {
+                if (!northWalls.has(y)) northWalls.set(y, []);
+                northWalls.get(y)!.push(x);
+            }
+
+            // South wall needed if no neighbor below
+            if (y === height - 1 || !activePixels[(y + 1) * width + x]) {
+                const wallY = y + 1;
+                if (!southWalls.has(wallY)) southWalls.set(wallY, []);
+                southWalls.get(wallY)!.push(x);
+            }
+
+            // West wall needed if no neighbor to the left
+            if (x === 0 || !activePixels[y * width + (x - 1)]) {
+                if (!westWalls.has(x)) westWalls.set(x, []);
+                westWalls.get(x)!.push(y);
+            }
+
+            // East wall needed if no neighbor to the right
+            if (x === width - 1 || !activePixels[y * width + (x + 1)]) {
+                const wallX = x + 1;
+                if (!eastWalls.has(wallX)) eastWalls.set(wallX, []);
+                eastWalls.get(wallX)!.push(y);
+            }
+        }
+    }
+
+    // Helper: merge wall segments respecting vertex positions
+    const mergeAndEmitHorizontalWalls = (
+        wallMap: Map<number, number[]>,
+        yCoord: number,
+        isSouth: boolean
+    ) => {
+        const xCoords = wallMap.get(yCoord);
+        if (!xCoords || xCoords.length === 0) return;
+
+        xCoords.sort((a, b) => a - b);
+
+        // Get all x-coordinates where we must have vertices at this y
+        const requiredVertices = verticesAtY.get(yCoord) || new Set<number>();
+
+        let runStart = xCoords[0];
+        let runEnd = runStart + 1;
+
+        for (let i = 1; i <= xCoords.length; i++) {
+            const nextX = i < xCoords.length ? xCoords[i] : -1;
+            const isContiguous = nextX === runEnd;
+            const mustSplit = requiredVertices.has(runEnd) && isContiguous;
+
+            if (!isContiguous || mustSplit || i === xCoords.length) {
+                // Emit wall segment from runStart to runEnd
+                if (isSouth) {
+                    // South wall (facing +Y)
+                    const wTL = getOrAddVertex(runStart, yCoord, true);
+                    const wTR = getOrAddVertex(runEnd, yCoord, true);
+                    const wBR = getOrAddVertex(runEnd, yCoord, false);
+                    const wBL = getOrAddVertex(runStart, yCoord, false);
+                    addQuadCCW(wBL, wTL, wTR, wBR);
+                } else {
+                    // North wall (facing -Y)
+                    const wTL = getOrAddVertex(runStart, yCoord, true);
+                    const wTR = getOrAddVertex(runEnd, yCoord, true);
+                    const wBR = getOrAddVertex(runEnd, yCoord, false);
+                    const wBL = getOrAddVertex(runStart, yCoord, false);
+                    addQuadCCW(wBR, wTR, wTL, wBL);
+                }
+
+                if (mustSplit && isContiguous) {
+                    // Continue from the split point
+                    runStart = runEnd;
+                    runEnd = runStart + 1;
+                } else if (i < xCoords.length) {
+                    runStart = nextX;
+                    runEnd = runStart + 1;
+                }
+            } else {
+                runEnd = nextX + 1;
+            }
+        }
+    };
+
+    const mergeAndEmitVerticalWalls = (
+        wallMap: Map<number, number[]>,
+        xCoord: number,
+        isEast: boolean
+    ) => {
+        const yCoords = wallMap.get(xCoord);
+        if (!yCoords || yCoords.length === 0) return;
+
+        yCoords.sort((a, b) => a - b);
+
+        // Get all y-coordinates where we must have vertices at this x
+        const requiredVertices = verticesAtX.get(xCoord) || new Set<number>();
+
+        let runStart = yCoords[0];
+        let runEnd = runStart + 1;
+
+        for (let i = 1; i <= yCoords.length; i++) {
+            const nextY = i < yCoords.length ? yCoords[i] : -1;
+            const isContiguous = nextY === runEnd;
+            const mustSplit = requiredVertices.has(runEnd) && isContiguous;
+
+            if (!isContiguous || mustSplit || i === yCoords.length) {
+                // Emit wall segment from runStart to runEnd
+                if (isEast) {
+                    // East wall (facing +X)
+                    const wTL = getOrAddVertex(xCoord, runStart, true);
+                    const wTR = getOrAddVertex(xCoord, runEnd, true);
+                    const wBR = getOrAddVertex(xCoord, runEnd, false);
+                    const wBL = getOrAddVertex(xCoord, runStart, false);
+                    addQuadCCW(wBR, wTR, wTL, wBL);
+                } else {
+                    // West wall (facing -X)
+                    const wTL = getOrAddVertex(xCoord, runStart, true);
+                    const wTR = getOrAddVertex(xCoord, runEnd, true);
+                    const wBR = getOrAddVertex(xCoord, runEnd, false);
+                    const wBL = getOrAddVertex(xCoord, runStart, false);
+                    addQuadCCW(wBL, wTL, wTR, wBR);
+                }
+
+                if (mustSplit && isContiguous) {
+                    // Continue from the split point
+                    runStart = runEnd;
+                    runEnd = runStart + 1;
+                } else if (i < yCoords.length) {
+                    runStart = nextY;
+                    runEnd = runStart + 1;
+                }
+            } else {
+                runEnd = nextY + 1;
+            }
+        }
+    };
+
+    // Emit all walls
+    for (const [y] of northWalls) {
+        mergeAndEmitHorizontalWalls(northWalls, y, false);
+    }
+    for (const [y] of southWalls) {
+        mergeAndEmitHorizontalWalls(southWalls, y, true);
+    }
+    for (const [x] of westWalls) {
+        mergeAndEmitVerticalWalls(westWalls, x, false);
+    }
+    for (const [x] of eastWalls) {
+        mergeAndEmitVerticalWalls(eastWalls, x, true);
+    }
+
     return {
         positions: new Float32Array(positions),
-        indices: indices
+        indices: indices,
     };
 }
