@@ -165,7 +165,7 @@ export default function ThreeDView({
             const buildGeometry = async (
                 img: HTMLImageElement,
                 resolution: number,
-                mode: 'preview' | 'final',
+                _mode: 'preview' | 'final',
                 bbox?: {
                     minX: number;
                     minY: number;
