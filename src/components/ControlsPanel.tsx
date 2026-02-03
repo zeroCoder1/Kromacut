@@ -57,7 +57,7 @@ export const ControlsPanel: React.FC<Props> = ({
                         <Select
                             value={selectedPalette}
                             onValueChange={(paletteId) => {
-                                const palette = PALETTES.find((p: any) => p.id === paletteId);
+                                const palette = PALETTES.find((p) => p.id === paletteId);
                                 if (palette) {
                                     onPaletteSelect(paletteId, palette.size);
                                 }
@@ -67,7 +67,7 @@ export const ControlsPanel: React.FC<Props> = ({
                                 <SelectValue placeholder="Select a palette" />
                             </SelectTrigger>
                             <SelectContent className="max-h-48 overflow-y-auto">
-                                {PALETTES.map((p: any) => (
+                                {PALETTES.map((p) => (
                                     <SelectItem key={p.id} value={p.id}>
                                         <div className="flex items-center gap-2">
                                             <span>

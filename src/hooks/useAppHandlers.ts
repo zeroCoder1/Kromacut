@@ -12,7 +12,8 @@ export interface UseAppHandlersParams {
     setExportingSTL: (b: boolean) => void;
     setExportProgress: (n: number) => void;
     exportingSTL: boolean;
-    exportMeshToStlBlob: (mesh: THREE.Mesh, onProgress?: (p: number) => void) => Promise<Blob>;
+    exportObjectToStlBlob: (object: THREE.Object3D, onProgress?: (p: number) => void) => Promise<Blob>;
+    exportObjectTo3MFBlob: (object: THREE.Object3D) => Promise<Blob>;
     applyQuantize: (
         canvasRef: RefObject<CanvasPreviewHandle | null>,
         options?: { overridePalette?: string[]; overrideFinalColors?: number }
@@ -29,7 +30,8 @@ export function useAppHandlers(params: UseAppHandlersParams) {
         setExportingSTL,
         setExportProgress,
         exportingSTL,
-        exportMeshToStlBlob,
+        exportObjectToStlBlob,
+        exportObjectTo3MFBlob,
         applyQuantize,
         swatches,
     } = params;
@@ -55,17 +57,17 @@ export function useAppHandlers(params: UseAppHandlersParams) {
     const onExportStl = useCallback(async () => {
         if (exportingSTL) return;
         interface KromacutWindow extends Window {
-            __KROMACUT_LAST_MESH?: THREE.Mesh;
+            __KROMACUT_LAST_MESH?: THREE.Object3D;
         }
-        const threeMesh = (window as KromacutWindow).__KROMACUT_LAST_MESH;
-        if (!threeMesh) {
-            alert('3D mesh not ready yet');
+        const threeObject = (window as KromacutWindow).__KROMACUT_LAST_MESH;
+        if (!threeObject) {
+            alert('3D model not ready yet');
             return;
         }
         setExportingSTL(true);
         setExportProgress(0);
         try {
-            const blob = await exportMeshToStlBlob(threeMesh, (p) => setExportProgress(p));
+            const blob = await exportObjectToStlBlob(threeObject, (p) => setExportProgress(p));
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
@@ -82,7 +84,38 @@ export function useAppHandlers(params: UseAppHandlersParams) {
             setExportingSTL(false);
             setTimeout(() => setExportProgress(0), 300);
         }
-    }, [exportingSTL, exportMeshToStlBlob, setExportingSTL, setExportProgress]);
+    }, [exportingSTL, exportObjectToStlBlob, setExportingSTL, setExportProgress]);
+
+    const onExport3MF = useCallback(async () => {
+        if (exportingSTL) return;
+        interface KromacutWindow extends Window {
+            __KROMACUT_LAST_MESH?: THREE.Object3D;
+        }
+        const threeObject = (window as KromacutWindow).__KROMACUT_LAST_MESH;
+        if (!threeObject) {
+            alert('3D model not ready yet');
+            return;
+        }
+        setExportingSTL(true); // Reuse flag or create separate one? Reuse is fine to block UI
+        setExportProgress(0); // 3MF export might not support progress yet
+        try {
+            const blob = await exportObjectTo3MFBlob(threeObject);
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            const timestamp = new Date().toISOString().slice(0, 10);
+            a.download = `kromacut-${timestamp}.3mf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            console.warn('3MF export failed', err);
+            alert('3MF export failed. See console for details.');
+        } finally {
+            setExportingSTL(false);
+        }
+    }, [exportingSTL, exportObjectTo3MFBlob, setExportingSTL, setExportProgress]);
 
     const onSwatchDelete = useCallback(
         async (deleted: SwatchEntry) => {
@@ -201,6 +234,7 @@ export function useAppHandlers(params: UseAppHandlersParams) {
     return {
         onExportImage,
         onExportStl,
+        onExport3MF,
         onSwatchDelete,
         onSwatchApply,
     } as const;
