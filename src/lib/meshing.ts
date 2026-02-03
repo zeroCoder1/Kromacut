@@ -145,22 +145,72 @@ export function generateGreedyMesh(
     }
 
     // --- Generate Top and Bottom Faces for each rectangle ---
+    
+    // Pre-sort vertices for fast range queries
+    const sortedVerticesAtY = new Map<number, number[]>();
+    for (const [y, set] of verticesAtY) {
+        sortedVerticesAtY.set(y, Array.from(set).sort((a, b) => a - b));
+    }
+    const sortedVerticesAtX = new Map<number, number[]>();
+    for (const [x, set] of verticesAtX) {
+        sortedVerticesAtX.set(x, Array.from(set).sort((a, b) => a - b));
+    }
+
     for (const rect of rectangles) {
         const { x, y, w, h } = rect;
 
-        // Top face (normal +Z):
-        const tTL = getOrAddVertex(x, y, true);
-        const tTR = getOrAddVertex(x + w, y, true);
-        const tBR = getOrAddVertex(x + w, y + h, true);
-        const tBL = getOrAddVertex(x, y + h, true);
-        addQuadCCW(tTL, tTR, tBR, tBL);
+        // Collect all boundary vertices in CCW order
+        // We filter the global vertex lines to find points lying on our edges
+        
+        // Top edge: y, x -> x+w
+        const topX = sortedVerticesAtY.get(y)!.filter(v => v >= x && v <= x + w);
+        // Right edge: x+w, y -> y+h
+        const rightY = sortedVerticesAtX.get(x + w)!.filter(v => v >= y && v <= y + h);
+        // Bottom edge: y+h, x+w -> x (Reverse for CCW)
+        const bottomX = sortedVerticesAtY.get(y + h)!.filter(v => v >= x && v <= x + w).reverse();
+        // Left edge: x, y+h -> y (Reverse for CCW)
+        const leftY = sortedVerticesAtX.get(x)!.filter(v => v >= y && v <= y + h).reverse();
 
-        // Bottom face (normal -Z):
-        const bTL = getOrAddVertex(x, y, false);
-        const bTR = getOrAddVertex(x + w, y, false);
-        const bBR = getOrAddVertex(x + w, y + h, false);
-        const bBL = getOrAddVertex(x, y + h, false);
-        addQuadCCW(bTL, bBL, bBR, bTR);
+        // Build the loop indices
+        // We exclude the last point of each segment as it's the start of the next
+        const buildLoop = (isTop: boolean) => {
+            const loop: number[] = [];
+            
+            // Top Edge (x to x+w)
+            for (let i = 0; i < topX.length - 1; i++) {
+                loop.push(getOrAddVertex(topX[i], y, isTop));
+            }
+            // Right Edge (y to y+h)
+            for (let i = 0; i < rightY.length - 1; i++) {
+                loop.push(getOrAddVertex(x + w, rightY[i], isTop));
+            }
+            // Bottom Edge (x+w to x)
+            for (let i = 0; i < bottomX.length - 1; i++) {
+                loop.push(getOrAddVertex(bottomX[i], y + h, isTop));
+            }
+            // Left Edge (y+h to y)
+            for (let i = 0; i < leftY.length - 1; i++) {
+                loop.push(getOrAddVertex(x, leftY[i], isTop));
+            }
+            return loop;
+        };
+
+        const topLoop = buildLoop(true);
+        const bottomLoop = buildLoop(false);
+
+        // Triangulate (Fan from first vertex) - Shape is convex
+        // Top Face (Normal +Z, CCW)
+        const t0 = topLoop[0];
+        for (let i = 1; i < topLoop.length - 1; i++) {
+            indices.push(t0, topLoop[i], topLoop[i + 1]);
+        }
+
+        // Bottom Face (Normal -Z, need CW winding viewed from outside)
+        // We use the same CCW loop but push indices as (v0, v2, v1)
+        const b0 = bottomLoop[0];
+        for (let i = 1; i < bottomLoop.length - 1; i++) {
+            indices.push(b0, bottomLoop[i + 1], bottomLoop[i]);
+        }
     }
 
     // --- Global Wall Generation ---
