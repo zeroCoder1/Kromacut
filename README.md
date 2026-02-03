@@ -34,7 +34,7 @@ Another minimal test you can try yourself in the app header: the Transmission Di
 - Per-color slice heights and a configurable base slice height.
 - Reorder colors with drag-and-drop to control stack order (darkest → lightest default ordering).
 - Live 2D preview and a 3D stacked preview rendered with three.js.
-- 3D model export to binary STL (suitable for slicers).
+- 3D model export to binary STL or 3MF (Preview) suitable for multi-material slicers.
 - Plain-text 3D print instructions that describe layer heights and exact layers where filament swaps are required.
 - Copy-to-clipboard button for the print instructions (produces a clean, copyable plain-text plan).
 
@@ -52,7 +52,7 @@ Another minimal test you can try yourself in the app header: the Transmission Di
 - Adjust quantization settings to reduce to the desired number of colors.
 - Tweak or replace swatches using the color pickers in the Swatches panel.
 - Open the 3D panel to configure per-color slice heights, base slice height, pixel size, and the color order.
-- When ready, click `Download STL` (in the preview-actions bar when in 3D mode) to export a binary STL file suitable for slicing.
+- When ready, click `Download STL` or `Download 3MF` (in the preview-actions bar when in 3D mode) to export your model.
 - Use the `Copy` button in the 3D controls to copy a plain-text print plan that lists layer heights and swap layers (hex codes are followed by friendly color names where available).
 
 ## 3D / printing specifics and tips
@@ -61,6 +61,12 @@ Another minimal test you can try yourself in the app header: the Transmission Di
 - Layer height default: `0.12 mm`
 - Layer height used to compute the exact layer numbers at which color swaps happen in the plain-text plan. 
 - Per-color slice heights are snapped/multiplied to sensible values relative to `layerHeight` when the swatches change or are initialized.
+
+## 3MF Export (Preview)
+
+Kromacut now supports exporting directly to `.3mf` format. This file format preserves color information by splitting the model into separate objects for each color, automatically assigned to different extruders/filaments.
+
+**Disclaimer:** This feature is currently in **PREVIEW**. While Kromacut preserves colors, the rest of the settings in the slicer profile should be manually adjusted. Please report any issues or weird behaviors you encounter on the GitHub Issues page.
 
 ## Transmission Distance (TD) — what it is and how to use it here
 
