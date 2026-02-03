@@ -6,7 +6,18 @@ export interface Export3MFOptions {
     firstLayerHeight?: number;
 }
 
-export async function exportObjectTo3MFBlob(root: THREE.Object3D, options?: Export3MFOptions): Promise<Blob> {
+function generateUUID() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+        const r = (Math.random() * 16) | 0,
+            v = c == 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+    });
+}
+
+export async function exportObjectTo3MFBlob(
+    root: THREE.Object3D,
+    options?: Export3MFOptions
+): Promise<Blob> {
     const zip = new JSZip();
 
     // [Content_Types].xml
@@ -46,7 +57,7 @@ export async function exportObjectTo3MFBlob(root: THREE.Object3D, options?: Expo
     const getMaterialIndex = (material: THREE.Material | THREE.Material[]): number => {
         const mat = Array.isArray(material) ? material[0] : material;
         let hex = 'FFFFFF';
-        if ((mat as THREE.MeshStandardMaterial).color) {
+        if ('color' in mat && (mat as THREE.MeshStandardMaterial).color) {
             hex = (mat as THREE.MeshStandardMaterial).color.getHexString().toUpperCase();
         }
         if (!colorMap.has(hex)) {
@@ -56,11 +67,16 @@ export async function exportObjectTo3MFBlob(root: THREE.Object3D, options?: Expo
         return colorMap.get(hex)!;
     };
 
+    // Pre-calculate all materials so we can write the header correctly
+    for (const mesh of meshes) {
+        getMaterialIndex(mesh.material);
+    }
+
     // Build object resources using a chunked writer to avoid OOM with massive arrays
     const xmlParts: string[] = [];
     let currentChunk = '';
     // Reduced chunk size to 10MB to be safer with string concatenation limits and memory pressure
-    const CHUNK_SIZE = 10 * 1024 * 1024; 
+    const CHUNK_SIZE = 10 * 1024 * 1024;
 
     const write = (str: string) => {
         currentChunk += str;
@@ -85,10 +101,15 @@ export async function exportObjectTo3MFBlob(root: THREE.Object3D, options?: Expo
 
     // Store IDs of generated mesh objects to group them later
     const componentIds: number[] = [];
+    const componentMeta: { id: number; name: string }[] = [];
 
     // Header and BaseMaterials
+    // Updated namespace to 2015 Core spec to ensure slicer compatibility
+    // Added BambuStudio namespace to help with preset/metadata recognition in modern slicers (Bambu/Orca/Creality)
+    // Added Production Extension (p) for UUID support which is often required for robust object tracking in slicers
     let header = `<?xml version="1.0" encoding="UTF-8"?>
-<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" xmlns:slic3rpe="http://schemas.slic3r.org/3mf/2017/06">
+<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:slic3rpe="http://schemas.slic3r.org/3mf/2017/06" xmlns:BambuStudio="http://schemas.bambulab.com/package/2021" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" requiredextensions="p">
+ <metadata name="BambuStudio:3mfVersion">1</metadata>
 `;
     if (options?.layerHeight !== undefined) {
         header += ` <metadata name="slic3rpe:layer_height">${options.layerHeight}</metadata>
@@ -100,14 +121,18 @@ export async function exportObjectTo3MFBlob(root: THREE.Object3D, options?: Expo
     }
     header += ` <resources>
 `;
-    header += `  <basematerials id="${baseMatId}">
+    
+    // Write Base Materials if we have any
+    if (colors.length > 0) {
+        header += `  <basematerials id="${baseMatId}">
 `;
-    for (const hex of colors) {
-        header += `   <base name="${hex}" displaycolor="#${hex}FF" />
+        for (const hex of colors) {
+            header += `   <base name="${hex}" displaycolor="#${hex}FF" />
+`;
+        }
+        header += `  </basematerials>
 `;
     }
-    header += `  </basematerials>
-`;
     
     write(header);
 
@@ -122,12 +147,14 @@ export async function exportObjectTo3MFBlob(root: THREE.Object3D, options?: Expo
         componentIds.push(objectId);
         
         let hex = 'FFFFFF';
-        if ((mesh.material as THREE.MeshStandardMaterial).color) {
+        if ('color' in mesh.material && (mesh.material as THREE.MeshStandardMaterial).color) {
             hex = (mesh.material as THREE.MeshStandardMaterial).color.getHexString().toUpperCase();
         }
         const objName = `Layer ${i + 1} (#${hex})`;
+        componentMeta.push({ id: objectId, name: objName });
+        const objUuid = generateUUID();
 
-        write(`<object id="${objectId}" pid="${baseMatId}" pindex="${matIdx}" type="model" name="${objName}">
+        write(`<object id="${objectId}" p:UUID="${objUuid}" pid="${baseMatId}" pindex="${matIdx}" type="model" name="${objName}">
 `);
         write(` <mesh>
 `);
@@ -187,12 +214,14 @@ export async function exportObjectTo3MFBlob(root: THREE.Object3D, options?: Expo
 
     // Assembly Object
     const assemblyId = nextId++;
-    write(`<object id="${assemblyId}" type="model" name="Kromacut Model">
+    const assemblyUuid = generateUUID();
+    write(`<object id="${assemblyId}" p:UUID="${assemblyUuid}" type="model" name="Kromacut Model">
 `);
     write(` <components>
 `);
     for (const id of componentIds) {
-        write(`  <component objectid="${id}" />
+        const compUuid = generateUUID();
+        write(`  <component objectid="${id}" p:UUID="${compUuid}" />
 `);
     }
     write(` </components>
@@ -202,9 +231,9 @@ export async function exportObjectTo3MFBlob(root: THREE.Object3D, options?: Expo
 
     write(` </resources>
 `);
-    write(` <build>
+    write(` <build p:UUID="${generateUUID()}">
 `);
-    write(`<item objectid="${assemblyId}" />
+    write(`<item objectid="${assemblyId}" p:UUID="${generateUUID()}" />
 `);
     write(` </build>
 `);
@@ -218,6 +247,27 @@ export async function exportObjectTo3MFBlob(root: THREE.Object3D, options?: Expo
     const finalBlob = new Blob(xmlParts, { type: 'text/xml' });
 
     zip.folder('3D')?.file('3dmodel.model', finalBlob);
+
+    // Generate Metadata/model_settings.config
+    // This is required for Bambu Studio / Orca Slicer / Creality Print to correctly identify
+    // the multipart object structure and assign names/settings, avoiding the "profile selection" prompt
+    // and enabling correct color assignment visualization.
+    let modelSettings = `<?xml version="1.0" encoding="UTF-8"?>
+<config>
+ <object id="${assemblyId}">
+  <metadata key="name" value="Kromacut Model"/>
+`;
+    for (const comp of componentMeta) {
+        const safeName = comp.name.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        modelSettings += `  <part id="${comp.id}" subtype="normal_part">
+   <metadata key="name" value="${safeName}"/>
+  </part>
+`;
+    }
+    modelSettings += ` </object>
+</config>`;
+
+    zip.folder('Metadata')?.file('model_settings.config', modelSettings);
 
     return await zip.generateAsync({ type: 'blob' });
 }
