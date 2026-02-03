@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import useThreeScene from '../hooks/useThreeScene';
+import { generateGreedyMesh } from '../lib/meshing';
 
 interface ThreeDViewProps {
     imageSrc?: string | null;
@@ -402,188 +403,20 @@ export default function ThreeDView({
 
                     if (activeCount === 0) continue;
 
-                    // Generate geometry for this layer
-                    // We reuse the wall-building logic from before
-                    const widthSegments = boxW;
-                    const heightSegments = boxH;
-                    const vertsRow = widthSegments + 1;
-                    
-                    // Generate vertices
-                    // Each vertex height is either thickness (if owning pixel is active) or 0
-                    // Actually, we want to generate a solid mesh for the active region.
-                    // Vertices for the grid:
-                    // A vertex (vx, vy) is shared by 4 pixels. 
-                    // To get crisp walls, we usually duplicate vertices or use logic where 
-                    // vertex height is max of adjacent active pixels.
-                    // For "minecraft" style blocks, we need 4 verts per pixel?
-                    // Or shared verts where adjacent pixels are both active.
-                    // The previous logic used shared verts and handled walls at boundaries.
-                    // We will stick to shared verts grid (vertsRow * (heightSegments+1)).
-                    // Vertex is "high" (thickness) if any adjacent pixel is active?
-                    // No, that dilates the shape.
-                    // Previously: cellHeights[x,y] = height.
-                    // Vertex Z = max of 4 adjacent cells.
-                    // If we have an isolated active pixel, its 4 corners become high.
-                    // This forms a plateau.
-                    // If we have an isolated inactive pixel surrounded by active, its corners are high?
-                    // Yes, so the hole is closed? No.
-                    // Let's re-verify the "max of adjacent" logic.
-                    // If (x,y) is active (H=T). Neighbors inactive (H=0).
-                    // Verts at (x,y), (x+1,y), (x,y+1), (x+1,y+1) will all see T as max.
-                    // So the quad for pixel (x,y) is at height T.
-                    // The quads for neighbors are at height T (at the shared edge) and 0 (at outer edge).
-                    // This creates a slope.
-                    // BUT we used `flatShading` and logic to separate top/bottom/walls.
-                    // The previous logic: 
-                    // 1. Set Z for all verts based on cell heights (max).
-                    // 2. Identify opaque cells.
-                    // 3. Create Top Faces for opaque cells (using the Zs).
-                    // 4. Create Bottom Faces.
-                    // 5. Create Walls between opaque and non-opaque.
-                    // This works perfectly for a "layer slab".
-                    // The "slope" happens if we used the shared verts for everything.
-                    // But we separate faces. Top face uses the high verts.
-                    // Does a neighbor (inactive) pixel use the high verts? 
-                    // If neighbor is inactive, we don't generate top/bottom faces for it.
-                    // So the slope geometry is never generated as a top face.
-                    // The wall is generated at the boundary.
-                    // So this logic holds.
-                    
-                    const numVerts = (widthSegments + 1) * (heightSegments + 1);
-                    const topZs = new Float32Array(numVerts);
-                    
-                    for (let vy = 0; vy <= heightSegments; vy++) {
-                         for (let vx = 0; vx <= widthSegments; vx++) {
-                             let isActiveVert = false;
-                             // Check 4 neighbors
-                             const check = (cx: number, cy: number) => {
-                                 if (cx >= 0 && cy >= 0 && cx < widthSegments && cy < heightSegments) {
-                                     if (activePixels[cy * widthSegments + cx]) isActiveVert = true;
-                                 }
-                             };
-                             check(vx - 1, vy - 1);
-                             check(vx - 1, vy);
-                             check(vx, vy - 1);
-                             check(vx, vy);
-                             topZs[vy * vertsRow + vx] = isActiveVert ? thickness : 0;
-                         }
-                    }
-
-                    // Build buffers
-                    const topIndices: number[] = [];
-                    const bottomIndices: number[] = [];
-                    
-                    for (let y = 0; y < heightSegments; y++) {
-                        for (let x = 0; x < widthSegments; x++) {
-                            if (!activePixels[y * widthSegments + x]) continue;
-                            const a = y * vertsRow + x;
-                            const b = a + 1;
-                            const c = a + vertsRow;
-                            const d = c + 1;
-                            // Top faces (CCW: a, b, c and b, d, c)
-                            topIndices.push(a, b, c, b, d, c);
-                            // Bottom faces (CW: a, c, b and b, c, d)
-                            bottomIndices.push(a, c, b, b, c, d);
-                        }
-                    }
-
-                    // Walls
-                    const wallIndices: number[] = [];
-                    const numV = numVerts; // convenient alias
-
-                    // Helper to push a quad (2 triangles)
-                    // v0, v1, v2, v3 in CCW order
-                    const pushQuad = (v0: number, v1: number, v2: number, v3: number) => {
-                        wallIndices.push(v0, v1, v2);
-                        wallIndices.push(v0, v2, v3);
-                    };
-                    
-                    for (let x = 0; x <= widthSegments; x++) {
-                        for (let y = 0; y < heightSegments; y++) {
-                             const l = (x > 0) ? activePixels[y * widthSegments + x - 1] : 0;
-                             const r = (x < widthSegments) ? activePixels[y * widthSegments + x] : 0;
-                             
-                             if (!!l !== !!r) {
-                                 // Vertical segment at x, from y to y+1
-                                 const tA = y * vertsRow + x;       // Top, y
-                                 const tB = (y + 1) * vertsRow + x; // Top, y+1
-                                 const bA = tA + numV;              // Bottom, y
-                                 const bB = tB + numV;              // Bottom, y+1
-                                 
-                                 if (l) {
-                                     // Right Wall of l (Normal +X)
-                                     // Winding: bA, bB, tB, tA
-                                     pushQuad(bA, bB, tB, tA);
-                                 } else {
-                                     // Left Wall of r (Normal -X)
-                                     // Winding: bB, bA, tA, tB
-                                     pushQuad(bB, bA, tA, tB);
-                                 }
-                             }
-                        }
-                    }
-                    for (let y = 0; y <= heightSegments; y++) {
-                        for (let x = 0; x < widthSegments; x++) {
-                             const t = (y > 0) ? activePixels[(y - 1) * widthSegments + x] : 0;
-                             const b = (y < heightSegments) ? activePixels[y * widthSegments + x] : 0;
-                             
-                             if (!!t !== !!b) {
-                                 // Horizontal segment at y, from x to x+1
-                                 const tA = y * vertsRow + x;       // Top, x
-                                 const tB = y * vertsRow + (x + 1); // Top, x+1
-                                 const bA = tA + numV;              // Bottom, x
-                                 const bB = tB + numV;              // Bottom, x+1
-                                 
-                                 if (t) {
-                                     // Bottom Wall of t (Normal +Y)
-                                     // Winding: bB, bA, tA, tB
-                                     pushQuad(bB, bA, tA, tB);
-                                 } else {
-                                     // Top Wall of b (Normal -Y)
-                                     // Winding: bA, bB, tB, tA
-                                     pushQuad(bA, bB, tB, tA);
-                                 }
-                             }
-                        }
-                    }
-
-                    // Construct final geometry
-                    const positions = new Float32Array(numVerts * 2 * 3);
-                    
-                    for (let i = 0; i < numVerts; i++) {
-                        const vx = i % vertsRow;
-                        const vy = Math.floor(i / vertsRow);
-                        // Top
-                        positions[i * 3 + 0] = vx;
-                        positions[i * 3 + 1] = vy;
-                        positions[i * 3 + 2] = topZs[i]; // thickness or 0
-                        // Bottom
-                        const bi = i + numVerts;
-                        positions[bi * 3 + 0] = vx;
-                        positions[bi * 3 + 1] = vy;
-                        positions[bi * 3 + 2] = 0; // base of this layer slab is local 0
-                    }
-
-                    // Indices
-                    const finalIndices: number[] = [];
-                    // Top faces
-                    for (let k = 0; k < topIndices.length; k++) {
-                        finalIndices.push(topIndices[k]);
-                    }
-                    // Bottom faces (offset by numVerts)
-                    for (let k = 0; k < bottomIndices.length; k++) {
-                        finalIndices.push(bottomIndices[k] + numVerts);
-                    }
-                    // Walls
-                    for (let k = 0; k < wallIndices.length; k++) {
-                        finalIndices.push(wallIndices[k]);
-                    }
+                    // Generate Optimized Greedy Mesh
+                    const { positions, indices } = generateGreedyMesh(
+                        activePixels,
+                        boxW,
+                        boxH,
+                        thickness,
+                        baseZ,
+                        pixelSize,
+                        heightScale
+                    );
 
                     const geom = new THREE.BufferGeometry();
                     geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-                    geom.setIndex(finalIndices);
-                    // No UVs needed for solid color? Or maybe for debug. 
-                    // No vertex colors needed, we use material color.
+                    geom.setIndex(indices);
                     geom.computeVertexNormals();
                     
                     const mat = new THREE.MeshStandardMaterial({
@@ -593,11 +426,9 @@ export default function ThreeDView({
                         side: THREE.DoubleSide 
                     });
                     
+                    // Note: generateGreedyMesh returns world-space coordinates (scaled by pixelSize/heightScale)
+                    // so we do not need to apply scale/position to the mesh itself.
                     const mesh = new THREE.Mesh(geom, mat);
-                    mesh.scale.set(pixelSize, pixelSize, heightScale);
-                    mesh.position.z = baseZ * heightScale;
-                    
-                    // Center the group? No, we didn't center before.
                     
                     modelGroup.add(mesh);
                     
