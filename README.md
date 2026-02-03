@@ -68,6 +68,8 @@ Kromacut now supports exporting directly to `.3mf` format. This file format pres
 
 **Disclaimer:** This feature is currently in **PREVIEW**. While Kromacut preserves colors, the rest of the settings in the slicer profile should be manually adjusted. Please report any issues or weird behaviors you encounter on the GitHub Issues page.
 
+<img src="content/3mf_export.png" alt="3MF Export" width="600" />
+
 ## Transmission Distance (TD) — what it is and how to use it here
 
 Transmission Distance (TD) is the concept HueForge uses to produce perceptual intermediate shades by stacking translucent filament layers: instead of relying purely on opaque color pigments, TD models how light transmits through thin layers of filament and how stacking different colors (and varying thickness) produces new perceived colors. HueForge does a lot of this work automatically for you (generating intermediate shades and mapping them to layer swaps). For a full conceptual description see the HueForge blog: https://shop.thehueforge.com/blogs/news/what-is-hueforge
