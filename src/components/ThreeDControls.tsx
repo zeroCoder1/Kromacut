@@ -9,7 +9,12 @@ import { HexColorPicker } from 'react-colorful';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
-import { generateAutoLayers, autoPaintToSliceHeights, type AutoPaintResult } from '@/lib/autoPaint';
+import {
+    generateAutoLayers,
+    autoPaintToSliceHeights,
+    type AutoPaintResult,
+    type TransitionZone,
+} from '../lib/autoPaint';
 
 /**
  * Estimate Transmission Distance (TD) from a hex color.
@@ -229,6 +234,8 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
     const [autoPaintEnabled, setAutoPaintEnabled] = useState<boolean>(
         persisted?.autoPaintEnabled ?? false
     );
+    // Max height constraint for auto-paint (undefined = use ideal/automatic height)
+    const [autoPaintMaxHeight, setAutoPaintMaxHeight] = useState<number | undefined>(undefined);
 
     // derive non-transparent swatches once per render and memoize
     const filtered = useMemo(() => {
@@ -414,7 +421,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         const heightsSig = colorSliceHeights.join(',');
         const orderSig = colorOrder.join(',');
         const filamentsSig = filaments.map((f) => `${f.id}:${f.color}:${f.td}`).join('|');
-        return `${layerHeight}|${slicerFirstLayerHeight}|${pixelSize}|${heightsSig}|${orderSig}|${swSig}|${filamentsSig}|${autoPaintEnabled}`;
+        return `${layerHeight}|${slicerFirstLayerHeight}|${pixelSize}|${heightsSig}|${orderSig}|${swSig}|${filamentsSig}|${autoPaintEnabled}|${autoPaintMaxHeight ?? 'auto'}`;
     }, [
         layerHeight,
         slicerFirstLayerHeight,
@@ -424,6 +431,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         filtered,
         filaments,
         autoPaintEnabled,
+        autoPaintMaxHeight,
     ]);
 
     const [appliedSignature, setAppliedSignature] = useState<string | null>(null);
@@ -437,9 +445,17 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
             filaments,
             filtered.map((s) => ({ hex: s.hex })),
             layerHeight,
-            slicerFirstLayerHeight
+            slicerFirstLayerHeight,
+            autoPaintMaxHeight // Pass max height constraint
         );
-    }, [autoPaintEnabled, filaments, filtered, layerHeight, slicerFirstLayerHeight]);
+    }, [
+        autoPaintEnabled,
+        filaments,
+        filtered,
+        layerHeight,
+        slicerFirstLayerHeight,
+        autoPaintMaxHeight,
+    ]);
 
     // Convert auto-paint result to slice heights format
     const autoPaintSliceData = useMemo(() => {
@@ -534,27 +550,32 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         // When auto-paint is enabled and we have computed layers, use those
         if (autoPaintEnabled && autoPaintResult && autoPaintResult.layers.length > 0) {
             const plan: SwapEntry[] = [];
-            autoPaintResult.layers.forEach((layer, idx) => {
-                const sw: Swatch = { hex: layer.filamentColor, a: 255 };
-                if (idx === 0) {
-                    plan.push({ type: 'start', swatch: sw });
-                } else {
-                    // Calculate layer number at the swap point
-                    const heightAt = layer.startHeight;
-                    const effFirst = Math.max(0, slicerFirstLayerHeight || 0);
-                    let layerNum = 1;
-                    if (layerHeight > 0) {
-                        const delta = Math.max(0, heightAt - effFirst);
-                        layerNum = 2 + Math.round(delta / layerHeight);
+            autoPaintResult.layers.forEach(
+                (
+                    layer: { filamentColor: string; startHeight: number; endHeight: number },
+                    idx: number
+                ) => {
+                    const sw: Swatch = { hex: layer.filamentColor, a: 255 };
+                    if (idx === 0) {
+                        plan.push({ type: 'start', swatch: sw });
+                    } else {
+                        // Calculate layer number at the swap point
+                        const heightAt = layer.startHeight;
+                        const effFirst = Math.max(0, slicerFirstLayerHeight || 0);
+                        let layerNum = 1;
+                        if (layerHeight > 0) {
+                            const delta = Math.max(0, heightAt - effFirst);
+                            layerNum = 2 + Math.round(delta / layerHeight);
+                        }
+                        plan.push({
+                            type: 'swap',
+                            swatch: sw,
+                            layer: layerNum,
+                            height: heightAt,
+                        });
                     }
-                    plan.push({
-                        type: 'swap',
-                        swatch: sw,
-                        layer: layerNum,
-                        height: heightAt,
-                    });
                 }
-            });
+            );
             return plan;
         }
 
@@ -885,69 +906,155 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                         Add Filament
                     </Button>
 
-                    {/* Auto-paint computed layers preview */}
+                    {/* Max Height Constraint */}
+                    {filaments.length > 0 && (
+                        <div className="space-y-2 pt-2">
+                            <div className="flex items-center justify-between">
+                                <label className="text-xs font-medium text-foreground">
+                                    Max Height
+                                </label>
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                                    mm
+                                </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <NumberInput
+                                    min={0.5}
+                                    max={20}
+                                    step={0.1}
+                                    value={autoPaintMaxHeight ?? ''}
+                                    placeholder={autoPaintResult?.idealHeight?.toFixed(1) ?? 'Auto'}
+                                    onChange={(e) => {
+                                        const v = e.target.value;
+                                        if (v === '' || v === undefined) {
+                                            setAutoPaintMaxHeight(undefined);
+                                        } else {
+                                            const num = Number(v);
+                                            if (!isNaN(num) && num > 0) {
+                                                setAutoPaintMaxHeight(num);
+                                            }
+                                        }
+                                    }}
+                                    onBlur={() => {
+                                        if (autoPaintMaxHeight !== undefined) {
+                                            setAutoPaintMaxHeight(
+                                                Math.max(0.5, Math.min(20, autoPaintMaxHeight))
+                                            );
+                                        }
+                                    }}
+                                    className="flex-1"
+                                />
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => setAutoPaintMaxHeight(undefined)}
+                                    className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
+                                    title="Use ideal height (no compression)"
+                                >
+                                    Auto
+                                </Button>
+                            </div>
+                            {autoPaintResult && (
+                                <div className="text-[10px] text-muted-foreground">
+                                    Ideal height: {autoPaintResult.idealHeight.toFixed(2)}mm
+                                    {autoPaintResult.compressionRatio < 1 && (
+                                        <span className="ml-2 text-amber-600">
+                                            ⚠️{' '}
+                                            {((1 - autoPaintResult.compressionRatio) * 100).toFixed(
+                                                0
+                                            )}
+                                            % compressed
+                                        </span>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* Auto-paint transition zones preview */}
                     {autoPaintEnabled &&
-                        autoPaintSliceData &&
-                        autoPaintSliceData.virtualSwatches.length > 0 && (
+                        autoPaintResult &&
+                        autoPaintResult.transitionZones.length > 0 && (
                             <>
                                 <div className="h-px bg-border/50 my-4" />
                                 <div className="space-y-2">
                                     <div className="flex items-center gap-2">
                                         <Sparkles className="w-4 h-4 text-amber-500" />
                                         <span className="text-xs font-semibold text-foreground">
-                                            Computed Layers
+                                            Transition Zones
                                         </span>
                                         <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-                                            {autoPaintSliceData.virtualSwatches.length} layers
+                                            {autoPaintResult.transitionZones.length} zones
                                         </span>
                                     </div>
-                                    <div className="text-[10px] text-muted-foreground">
-                                        Total height:{' '}
-                                        {autoPaintSliceData.colorSliceHeights
-                                            .reduce((sum, h) => sum + h, 0)
-                                            .toFixed(2)}
-                                        mm
+                                    <div className="text-[10px] text-muted-foreground space-y-0.5">
+                                        <div>
+                                            Total height: {autoPaintResult.totalHeight.toFixed(2)}mm
+                                            {autoPaintSliceData && (
+                                                <span className="ml-2 text-muted-foreground/70">
+                                                    ({autoPaintSliceData.virtualSwatches.length}{' '}
+                                                    physical layers)
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
-                                    <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                                        {(() => {
-                                            // Calculate cumulative heights for display
-                                            let cumulativeHeight = 0;
-                                            return autoPaintSliceData.virtualSwatches.map(
-                                                (swatch, idx) => {
-                                                    const thickness =
-                                                        autoPaintSliceData.colorSliceHeights[idx] ||
-                                                        0;
-                                                    const startHeight = cumulativeHeight;
-                                                    const endHeight = cumulativeHeight + thickness;
-                                                    cumulativeHeight = endHeight;
-                                                    return (
-                                                        <div
-                                                            key={`layer-${idx}`}
-                                                            className="flex items-center gap-2 p-2 rounded-md bg-muted/30 border border-border/30"
-                                                        >
-                                                            <span
-                                                                className="w-4 h-4 rounded-full border border-border flex-shrink-0"
-                                                                style={{
-                                                                    backgroundColor: swatch.hex,
-                                                                }}
-                                                            />
-                                                            <div className="flex-1 min-w-0">
-                                                                <div className="text-[10px] font-mono text-foreground">
-                                                                    Layer {idx + 1}: {swatch.hex}
-                                                                </div>
-                                                                <div className="text-[9px] text-muted-foreground">
-                                                                    {startHeight.toFixed(2)}mm →{' '}
-                                                                    {endHeight.toFixed(2)}mm
-                                                                    <span className="ml-1 text-primary">
-                                                                        (Δ{thickness.toFixed(2)}mm)
+                                    <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                                        {autoPaintResult.transitionZones.map(
+                                            (zone: TransitionZone, idx: number) => {
+                                                const isCompressed =
+                                                    zone.actualThickness <
+                                                    zone.idealThickness - 0.01;
+                                                return (
+                                                    <div
+                                                        key={`zone-${idx}`}
+                                                        className={`flex items-center gap-2 p-2 rounded-md border ${
+                                                            isCompressed
+                                                                ? 'bg-amber-500/5 border-amber-500/30'
+                                                                : 'bg-muted/30 border-border/30'
+                                                        }`}
+                                                    >
+                                                        <span
+                                                            className="w-5 h-5 rounded-full border border-border flex-shrink-0 shadow-sm"
+                                                            style={{
+                                                                backgroundColor: zone.filamentColor,
+                                                            }}
+                                                        />
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex items-center gap-1.5">
+                                                                <span className="text-[10px] font-mono text-foreground">
+                                                                    {zone.filamentColor}
+                                                                </span>
+                                                                {isCompressed && (
+                                                                    <span className="text-[9px] px-1 py-0.5 rounded bg-amber-500/20 text-amber-600 font-medium">
+                                                                        compressed
                                                                     </span>
-                                                                </div>
+                                                                )}
+                                                            </div>
+                                                            <div className="text-[9px] text-muted-foreground">
+                                                                {zone.startHeight.toFixed(2)}mm →{' '}
+                                                                {zone.endHeight.toFixed(2)}mm
+                                                                <span className="ml-1 text-primary font-medium">
+                                                                    (Δ
+                                                                    {zone.actualThickness.toFixed(
+                                                                        2
+                                                                    )}
+                                                                    mm)
+                                                                </span>
+                                                                {isCompressed && (
+                                                                    <span className="ml-1 text-amber-600/70">
+                                                                        ideal:{' '}
+                                                                        {zone.idealThickness.toFixed(
+                                                                            2
+                                                                        )}
+                                                                        mm
+                                                                    </span>
+                                                                )}
                                                             </div>
                                                         </div>
-                                                    );
-                                                }
-                                            );
-                                        })()}
+                                                    </div>
+                                                );
+                                            }
+                                        )}
                                     </div>
                                 </div>
                             </>

@@ -1,12 +1,15 @@
 /**
  * Auto-Paint Algorithm for Filament Painting (HueForge-style lithophanes)
  *
- * This module implements the "Optical Slicer" approach to automatically generate
- * filament layer assignments based on the Beer-Lambert law for optical blending.
+ * This module implements a physically-accurate optical simulation for
+ * multi-filament lithophane printing using the Beer-Lambert law.
  *
- * Core concept: Instead of mapping image colors 1-to-1 to layers, we simulate
- * the physical stacking of semi-transparent filaments to achieve target luminance
- * values at each Z-height.
+ * Key concepts:
+ * 1. TRANSITION ZONES: Each filament needs enough vertical space to fully
+ *    transition from the previous color to its pure color.
+ * 2. CUMULATIVE HEIGHT: Total height = sum of all transition zones.
+ * 3. COMPRESSION: If user sets a max height below the ideal, zones are compressed.
+ * 4. LUMINANCE MAPPING: Image pixel brightness maps to position within zones.
  */
 
 import type { Filament } from '../components/ThreeDControls';
@@ -16,6 +19,23 @@ export interface RGB {
     r: number;
     g: number;
     b: number;
+}
+
+/** Lab color representation for perceptual color difference */
+export interface Lab {
+    L: number;
+    a: number;
+    b: number;
+}
+
+/** A transition zone between two filaments */
+export interface TransitionZone {
+    filamentId: string;
+    filamentColor: string;
+    startHeight: number; // mm from Z=0
+    endHeight: number; // mm from Z=0
+    idealThickness: number; // Uncompressed zone thickness
+    actualThickness: number; // After compression
 }
 
 /** A generated layer segment from the auto-paint algorithm */
@@ -30,8 +50,15 @@ export interface AutoPaintLayer {
 export interface AutoPaintResult {
     layers: AutoPaintLayer[];
     totalHeight: number;
+    idealHeight: number; // What height would be ideal without compression
+    compressionRatio: number; // 1.0 = no compression, 0.5 = 50% compressed
     filamentOrder: string[]; // Filament IDs in order (dark to light)
+    transitionZones: TransitionZone[]; // Detailed zone info
 }
+
+// =============================================================================
+// COLOR CONVERSION UTILITIES
+// =============================================================================
 
 /**
  * Convert hex color to RGB
@@ -57,6 +84,66 @@ export function rgbToHex(rgb: RGB): string {
 }
 
 /**
+ * Convert RGB (0-255) to Lab color space for perceptual color difference
+ */
+export function rgbToLab(rgb: RGB): Lab {
+    // First convert RGB to XYZ
+    let r = rgb.r / 255;
+    let g = rgb.g / 255;
+    let b = rgb.b / 255;
+
+    // sRGB gamma correction
+    r = r > 0.04045 ? Math.pow((r + 0.055) / 1.055, 2.4) : r / 12.92;
+    g = g > 0.04045 ? Math.pow((g + 0.055) / 1.055, 2.4) : g / 12.92;
+    b = b > 0.04045 ? Math.pow((b + 0.055) / 1.055, 2.4) : b / 12.92;
+
+    r *= 100;
+    g *= 100;
+    b *= 100;
+
+    // RGB to XYZ (D65 illuminant)
+    const x = r * 0.4124564 + g * 0.3575761 + b * 0.1804375;
+    const y = r * 0.2126729 + g * 0.7151522 + b * 0.072175;
+    const z = r * 0.0193339 + g * 0.119192 + b * 0.9503041;
+
+    // XYZ to Lab (D65 reference white)
+    const refX = 95.047;
+    const refY = 100.0;
+    const refZ = 108.883;
+
+    let xr = x / refX;
+    let yr = y / refY;
+    let zr = z / refZ;
+
+    const epsilon = 0.008856;
+    const kappa = 903.3;
+
+    xr = xr > epsilon ? Math.cbrt(xr) : (kappa * xr + 16) / 116;
+    yr = yr > epsilon ? Math.cbrt(yr) : (kappa * yr + 16) / 116;
+    zr = zr > epsilon ? Math.cbrt(zr) : (kappa * zr + 16) / 116;
+
+    return {
+        L: 116 * yr - 16,
+        a: 500 * (xr - yr),
+        b: 200 * (yr - zr),
+    };
+}
+
+/**
+ * Calculate Delta E (CIE76) - perceptual color difference
+ * A DeltaE < 1 is generally imperceptible to the human eye.
+ * DeltaE < 2.3 is considered "just noticeable difference"
+ */
+export function deltaE(color1: RGB, color2: RGB): number {
+    const lab1 = rgbToLab(color1);
+    const lab2 = rgbToLab(color2);
+
+    return Math.sqrt(
+        Math.pow(lab1.L - lab2.L, 2) + Math.pow(lab1.a - lab2.a, 2) + Math.pow(lab1.b - lab2.b, 2)
+    );
+}
+
+/**
  * Calculate perceived luminance (brightness) from RGB values.
  * Uses the standard sRGB luminance coefficients.
  *
@@ -66,6 +153,10 @@ export function rgbToHex(rgb: RGB): string {
 export function getLuminance(color: RGB): number {
     return 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
 }
+
+// =============================================================================
+// OPTICAL BLENDING (BEER-LAMBERT LAW)
+// =============================================================================
 
 /**
  * Calculate the resulting color when placing a semi-transparent filament
@@ -99,7 +190,6 @@ export function blendColors(
     const opacity = 1 - transmission;
 
     // Linear interpolation (simple RGB mixing)
-    // For a more accurate implementation, we could convert to Lab color space
     return {
         r: filamentColor.r * opacity + backgroundColor.r * transmission,
         g: filamentColor.g * opacity + backgroundColor.g * transmission,
@@ -120,218 +210,287 @@ export function getOpacity(filamentTD: number, thickness: number): number {
     return 1 - transmission;
 }
 
-/**
- * Linear interpolation
- */
-function lerp(a: number, b: number, t: number): number {
-    return a + (b - a) * t;
-}
+// =============================================================================
+// TRANSITION ZONE CALCULATION
+// =============================================================================
 
 /**
- * Calculate the recommended model height based on filaments.
- * The model should be thick enough for the lightest filament to reach
- * near-full opacity (~99%).
- *
- * @param filaments - Array of filaments sorted dark to light
- * @returns Recommended model height in mm
+ * DeltaE threshold for considering a color transition "complete".
+ * Below this value, the blended color is perceptually indistinguishable
+ * from the target pure filament color.
  */
-export function calculateRecommendedHeight(
-    filaments: Array<{ color: string; td: number }>
+const DELTA_E_THRESHOLD = 2.3; // "Just noticeable difference"
+
+/**
+ * Simulate adding filament layers until the blended color matches the
+ * target pure filament color (DeltaE < threshold).
+ *
+ * @param backgroundColor - Starting background color
+ * @param filamentColor - Target filament color
+ * @param filamentTD - Transmission distance of the filament
+ * @param layerHeight - Physical layer height increment
+ * @returns Thickness needed for complete transition
+ */
+export function calculateTransitionThickness(
+    backgroundColor: RGB,
+    filamentColor: RGB,
+    filamentTD: number,
+    layerHeight: number
 ): number {
-    if (filaments.length === 0) return 2.0; // Default 2mm
+    // Early exit if colors are already close
+    if (deltaE(backgroundColor, filamentColor) < DELTA_E_THRESHOLD) {
+        return layerHeight; // Still need at least one layer
+    }
 
-    // Find the highest TD (slowest to become opaque)
-    const maxTD = Math.max(...filaments.map((f) => f.td));
+    let thickness = 0;
+    let currentColor = backgroundColor;
+    const maxThickness = filamentTD * 3; // Safety cap: 3x TD is definitely opaque
 
-    // At what thickness does transmission drop below 1%? (99% opaque)
-    // 0.01 = 0.1^(thickness/TD)
-    // log(0.01) = (thickness/TD) * log(0.1)
-    // -2 = (thickness/TD) * (-1)
-    // thickness = 2 * TD
-    const targetThickness = 2 * maxTD;
+    // Simulate adding layers until we match the target
+    while (thickness < maxThickness) {
+        thickness += layerHeight;
+        currentColor = blendColors(backgroundColor, filamentColor, filamentTD, thickness);
 
-    // Clamp to reasonable bounds (0.5mm to 10mm)
-    return Math.max(0.5, Math.min(10, targetThickness));
+        if (deltaE(currentColor, filamentColor) < DELTA_E_THRESHOLD) {
+            break;
+        }
+    }
+
+    return thickness;
 }
 
 /**
- * Generate auto-paint layers based on filaments and image data.
+ * Calculate the ideal model height based on cumulative transition zones.
  *
- * This algorithm simulates the optical stacking of filaments layer by layer,
- * deciding when to swap to the next lighter filament based on whether it
- * gets us closer to the target luminance gradient.
+ * This simulates the full stack from darkest to lightest filament,
+ * calculating how much vertical space each transition needs.
+ *
+ * @param sortedFilaments - Filaments sorted dark to light
+ * @param layerHeight - Physical layer height
+ * @param baseThickness - Minimum thickness for the first (darkest) layer
+ * @returns Object with ideal height and zone breakdown
+ */
+export function calculateIdealHeight(
+    sortedFilaments: Array<{ id: string; color: string; td: number }>,
+    layerHeight: number,
+    baseThickness: number = 0.6
+): { idealHeight: number; zones: TransitionZone[] } {
+    if (sortedFilaments.length === 0) {
+        return { idealHeight: baseThickness, zones: [] };
+    }
+
+    const zones: TransitionZone[] = [];
+    let currentHeight = 0;
+    let currentBackgroundColor = hexToRgb(sortedFilaments[0].color);
+
+    // Zone 1: Foundation layer (darkest filament)
+    // Need enough to be fully opaque so we don't see the light source
+    const firstFilament = sortedFilaments[0];
+    const foundationThickness = Math.max(baseThickness, firstFilament.td * 0.8);
+
+    zones.push({
+        filamentId: firstFilament.id,
+        filamentColor: firstFilament.color,
+        startHeight: 0,
+        endHeight: foundationThickness,
+        idealThickness: foundationThickness,
+        actualThickness: foundationThickness,
+    });
+    currentHeight = foundationThickness;
+
+    // Subsequent zones: each filament transitions from the previous
+    for (let i = 1; i < sortedFilaments.length; i++) {
+        const filament = sortedFilaments[i];
+        const filamentRgb = hexToRgb(filament.color);
+
+        // Calculate how thick this zone needs to be
+        const transitionThickness = calculateTransitionThickness(
+            currentBackgroundColor,
+            filamentRgb,
+            filament.td,
+            layerHeight
+        );
+
+        zones.push({
+            filamentId: filament.id,
+            filamentColor: filament.color,
+            startHeight: currentHeight,
+            endHeight: currentHeight + transitionThickness,
+            idealThickness: transitionThickness,
+            actualThickness: transitionThickness,
+        });
+
+        // Update for next iteration
+        currentBackgroundColor = filamentRgb;
+        currentHeight += transitionThickness;
+    }
+
+    return { idealHeight: currentHeight, zones };
+}
+
+/**
+ * Apply compression to transition zones when max height is exceeded.
+ *
+ * @param zones - Original transition zones
+ * @param maxHeight - User's maximum height constraint
+ * @returns Compressed zones and compression ratio
+ */
+export function compressZones(
+    zones: TransitionZone[],
+    maxHeight: number
+): { compressedZones: TransitionZone[]; compressionRatio: number } {
+    if (zones.length === 0) {
+        return { compressedZones: [], compressionRatio: 1 };
+    }
+
+    const idealHeight = zones[zones.length - 1].endHeight;
+
+    if (idealHeight <= maxHeight) {
+        // No compression needed
+        return { compressedZones: zones, compressionRatio: 1 };
+    }
+
+    const compressionRatio = maxHeight / idealHeight;
+
+    // Apply uniform compression to all zones
+    const compressedZones: TransitionZone[] = [];
+    let currentHeight = 0;
+
+    for (const zone of zones) {
+        const compressedThickness = zone.idealThickness * compressionRatio;
+        compressedZones.push({
+            ...zone,
+            startHeight: currentHeight,
+            endHeight: currentHeight + compressedThickness,
+            actualThickness: compressedThickness,
+        });
+        currentHeight += compressedThickness;
+    }
+
+    return { compressedZones, compressionRatio };
+}
+
+// =============================================================================
+// MAIN AUTO-PAINT ALGORITHM
+// =============================================================================
+
+/**
+ * Generate auto-paint layers based on filaments, image data, and constraints.
+ *
+ * Algorithm:
+ * 1. Sort filaments by luminance (dark to light)
+ * 2. Calculate ideal transition zones using DeltaE simulation
+ * 3. Apply compression if max height is exceeded
+ * 4. Generate layer segments for the 3D model
  *
  * @param filaments - User's list of filaments with colors and TDs
  * @param imageSwatches - Distinct colors from the image (for luminance range)
  * @param layerHeight - Layer height in mm (e.g., 0.12)
  * @param firstLayerHeight - First layer height in mm (e.g., 0.20)
- * @param maxModelHeight - Optional override for max model height
- * @returns Generated layer segments
+ * @param maxHeight - Optional maximum height constraint (undefined = auto)
+ * @returns Generated layer segments with zone information
  */
 export function generateAutoLayers(
     filaments: Filament[],
     imageSwatches: Array<{ hex: string }>,
     layerHeight: number,
     firstLayerHeight: number,
-    maxModelHeight?: number
+    maxHeight?: number
 ): AutoPaintResult {
     // --- STEP 1: VALIDATION ---
     if (filaments.length === 0) {
-        return { layers: [], totalHeight: 0, filamentOrder: [] };
+        return {
+            layers: [],
+            totalHeight: 0,
+            idealHeight: 0,
+            compressionRatio: 1,
+            filamentOrder: [],
+            transitionZones: [],
+        };
     }
 
     if (imageSwatches.length === 0) {
-        return { layers: [], totalHeight: 0, filamentOrder: [] };
+        return {
+            layers: [],
+            totalHeight: 0,
+            idealHeight: 0,
+            compressionRatio: 1,
+            filamentOrder: [],
+            transitionZones: [],
+        };
     }
 
-    // --- STEP 2: SORTING FILAMENTS ---
-    // Sort filaments from Darkest to Lightest (by luminance)
+    // --- STEP 2: SORT FILAMENTS BY LUMINANCE (dark to light) ---
     const sortedFilaments = [...filaments].sort((a, b) => {
         const lumA = getLuminance(hexToRgb(a.color));
         const lumB = getLuminance(hexToRgb(b.color));
         return lumA - lumB;
     });
 
-    // --- STEP 3: GET TARGET LUMINANCE RANGE FROM IMAGE ---
-    const swatchLuminances = imageSwatches.map((s) => getLuminance(hexToRgb(s.hex)));
-    const minImageLum = Math.min(...swatchLuminances);
-    const maxImageLum = Math.max(...swatchLuminances);
-
-    // --- STEP 4: DETERMINE MODEL HEIGHT ---
-    const recommendedHeight = calculateRecommendedHeight(
-        sortedFilaments.map((f) => ({ color: f.color, td: f.td }))
-    );
-    const modelHeight = maxModelHeight ?? recommendedHeight;
-
-    // --- STEP 5: STATE INITIALIZATION ---
-    const generatedLayers: AutoPaintLayer[] = [];
-
-    // "Current Background" is the color of the stack accumulated so far.
-    // Initially, it's the color of the first (darkest) filament
-    let currentBackingColor = hexToRgb(sortedFilaments[0].color);
-    let lastSwapZ = 0;
-
-    let activeFilamentIndex = 0;
-    let currentZ = firstLayerHeight; // Start at the first layer
-
-    // Track the filament order for the result
     const filamentOrder = sortedFilaments.map((f) => f.id);
 
-    // --- STEP 6: THE SIMULATION LOOP ---
-    // We iterate through every physical layer of the print
-    while (currentZ <= modelHeight) {
-        const activeFilament = sortedFilaments[activeFilamentIndex];
-        const activeFilamentRgb = hexToRgb(activeFilament.color);
+    // --- STEP 3: CALCULATE IDEAL HEIGHT WITH TRANSITION ZONES ---
+    const { idealHeight, zones } = calculateIdealHeight(
+        sortedFilaments.map((f) => ({ id: f.id, color: f.color, td: f.td })),
+        layerHeight,
+        Math.max(firstLayerHeight, 0.6)
+    );
 
-        // A. CALCULATE TARGET LUMINANCE
-        // Where are we vertically? (0.0 to 1.0)
-        const progress = currentZ / modelHeight;
-        // What luminance *should* we have here to match the image gradient?
-        const targetLuminance = lerp(minImageLum, maxImageLum, progress);
+    // --- STEP 4: APPLY COMPRESSION IF NEEDED ---
+    const targetMaxHeight = maxHeight ?? idealHeight;
+    const { compressedZones, compressionRatio } = compressZones(zones, targetMaxHeight);
 
-        // B. CALCULATE CURRENT REALITY
-        // Thickness of the TOP filament only (distance since last swap)
-        const topThickness = currentZ - lastSwapZ;
+    // --- STEP 5: GENERATE LAYER SEGMENTS FROM ZONES ---
+    const layers: AutoPaintLayer[] = compressedZones.map((zone) => ({
+        filamentId: zone.filamentId,
+        filamentColor: zone.filamentColor,
+        startHeight: zone.startHeight,
+        endHeight: zone.endHeight,
+    }));
 
-        const currentColor = blendColors(
-            currentBackingColor,
-            activeFilamentRgb,
-            activeFilament.td,
-            topThickness
-        );
-        const currentLum = getLuminance(currentColor);
-        const currentError = Math.abs(currentLum - targetLuminance);
-
-        // C. CHECK FOR SWAP (Look Ahead)
-        // Can we do better by switching to the NEXT filament in the list?
-        if (activeFilamentIndex < sortedFilaments.length - 1) {
-            const nextFilament = sortedFilaments[activeFilamentIndex + 1];
-            const nextFilamentRgb = hexToRgb(nextFilament.color);
-
-            // Simulation: What if we swapped to the next filament now?
-            // The current stack becomes the background, and we add one layer of new stuff
-            const hypoColor = blendColors(
-                currentColor, // The current stack becomes the background
-                nextFilamentRgb,
-                nextFilament.td,
-                layerHeight // Just one layer of the new stuff
-            );
-
-            const hypoLum = getLuminance(hypoColor);
-            const hypoError = Math.abs(hypoLum - targetLuminance);
-
-            // LOGIC: If the next filament gets us closer to the target brightness
-            // than sticking with the current one, we swap.
-            if (hypoError < currentError) {
-                // 1. Save the segment we just finished
-                generatedLayers.push({
-                    filamentId: activeFilament.id,
-                    filamentColor: activeFilament.color,
-                    startHeight: lastSwapZ,
-                    endHeight: currentZ,
-                });
-
-                // 2. "Bake" the stack
-                // The stack we just built becomes the new solid background
-                currentBackingColor = currentColor;
-                lastSwapZ = currentZ;
-
-                // 3. Switch Index
-                activeFilamentIndex++;
-
-                // Continue to next iteration without incrementing Z
-                // to re-evaluate this height with the new filament
-                continue;
-            }
-        }
-
-        // --- STEP 7: OPTIMIZATION (Early termination) ---
-        // If the top layer is now so thick that it is effectively opaque
-        // (opacity > 99%), and we have no more filaments to swap to,
-        // we can stop - the rest would just be wasted plastic
-        if (activeFilamentIndex === sortedFilaments.length - 1) {
-            const opacity = getOpacity(activeFilament.td, topThickness);
-            if (opacity > 0.99) {
-                // We've reached full opacity with the final filament
-                // Record this segment and exit
-                generatedLayers.push({
-                    filamentId: activeFilament.id,
-                    filamentColor: activeFilament.color,
-                    startHeight: lastSwapZ,
-                    endHeight: currentZ,
-                });
-                return {
-                    layers: generatedLayers,
-                    totalHeight: currentZ,
-                    filamentOrder,
-                };
-            }
-        }
-
-        // Increment Height
-        currentZ += layerHeight;
-    }
-
-    // --- STEP 8: FINALIZE ---
-    // Add the final segment
-    generatedLayers.push({
-        filamentId: sortedFilaments[activeFilamentIndex].id,
-        filamentColor: sortedFilaments[activeFilamentIndex].color,
-        startHeight: lastSwapZ,
-        endHeight: modelHeight,
-    });
+    const totalHeight =
+        compressedZones.length > 0 ? compressedZones[compressedZones.length - 1].endHeight : 0;
 
     return {
-        layers: generatedLayers,
-        totalHeight: modelHeight,
+        layers,
+        totalHeight,
+        idealHeight,
+        compressionRatio,
         filamentOrder,
+        transitionZones: compressedZones,
     };
 }
 
 /**
+ * Calculate the recommended model height based on filaments.
+ * This is a quick estimate before the full zone calculation.
+ *
+ * @param filaments - Array of filaments
+ * @returns Recommended model height in mm
+ */
+export function calculateRecommendedHeight(
+    filaments: Array<{ color: string; td: number }>
+): number {
+    if (filaments.length === 0) return 2.0;
+
+    // Sum of TDs gives a rough estimate of total transition space needed
+    const totalTD = filaments.reduce((sum, f) => sum + f.td, 0);
+
+    // Typically need about 0.8x to 1.2x the sum of TDs
+    const estimated = totalTD * 0.9;
+
+    // Clamp to reasonable bounds
+    return Math.max(1.0, Math.min(15, estimated));
+}
+
+// =============================================================================
+// SLICE HEIGHT CONVERSION (for ThreeDView)
+// =============================================================================
+
+/**
  * Convert auto-paint layers to the format expected by ThreeDView.
  *
- * This function generates MULTIPLE layers at each layerHeight increment,
+ * This function generates layers at each layerHeight increment,
  * creating a graduated effect where higher layers cover progressively
  * fewer pixels (only the lightest ones).
  *
@@ -362,7 +521,6 @@ export function autoPaintToSliceHeights(
     const colorOrder: number[] = [];
 
     // Generate layers at each layerHeight increment from 0 to totalHeight
-    // Each layer gets the color of whichever filament is active at that Z height
     let currentZ = 0;
     let layerIndex = 0;
 
@@ -372,17 +530,15 @@ export function autoPaintToSliceHeights(
 
         const layerTopZ = currentZ + thickness;
 
-        // Find which filament is active at this Z height
-        // (find the layer whose range contains currentZ)
+        // Find which filament is active at this Z height (from transition zones)
         let activeColor = result.layers[0].filamentColor;
-        for (const layer of result.layers) {
-            if (currentZ >= layer.startHeight && currentZ < layer.endHeight) {
-                activeColor = layer.filamentColor;
+        for (const zone of result.transitionZones) {
+            if (currentZ >= zone.startHeight && currentZ < zone.endHeight) {
+                activeColor = zone.filamentColor;
                 break;
             }
-            // If we're past the layer's end, this might be the active one
-            if (currentZ >= layer.startHeight) {
-                activeColor = layer.filamentColor;
+            if (currentZ >= zone.startHeight) {
+                activeColor = zone.filamentColor;
             }
         }
 
@@ -397,7 +553,7 @@ export function autoPaintToSliceHeights(
         currentZ = layerTopZ;
         layerIndex++;
 
-        // Safety limit to prevent infinite loops
+        // Safety limit
         if (layerIndex > 500) {
             console.warn('autoPaintToSliceHeights: too many layers, stopping at 500');
             break;
@@ -411,6 +567,57 @@ export function autoPaintToSliceHeights(
     };
 }
 
+// =============================================================================
+// LUMINANCE-TO-HEIGHT MAPPING
+// =============================================================================
+
+/**
+ * Map a pixel's luminance to a target height within the transition zones.
+ *
+ * This is the key function that determines how image brightness translates
+ * to physical height in the 3D model.
+ *
+ * The mapping works as follows:
+ * - Darkest pixels (luminance = 0) → minimum height (base layer only)
+ * - Lightest pixels (luminance = 1) → maximum height (all layers)
+ * - Mid-tones → proportional position within the transition zones
+ *
+ * @param normalizedLuminance - Pixel luminance normalized to 0-1
+ * @param transitionZones - The computed transition zones
+ * @param totalHeight - Total model height
+ * @param firstLayerHeight - First layer height
+ * @returns Target height in mm
+ */
+export function luminanceToHeight(
+    normalizedLuminance: number,
+    transitionZones: TransitionZone[],
+    totalHeight: number,
+    firstLayerHeight: number
+): number {
+    if (transitionZones.length === 0) {
+        return firstLayerHeight;
+    }
+
+    // Base height (darkest pixels get at least the foundation)
+    const baseHeight = transitionZones[0].endHeight;
+
+    if (normalizedLuminance <= 0) {
+        return baseHeight;
+    }
+
+    if (normalizedLuminance >= 1) {
+        return totalHeight;
+    }
+
+    // Linear interpolation from base to total height
+    // This gives a smooth gradient where brightness = height
+    return baseHeight + normalizedLuminance * (totalHeight - baseHeight);
+}
+
+// =============================================================================
+// DEBUG UTILITIES
+// =============================================================================
+
 /**
  * Debug helper: simulate and log the optical stacking at each layer
  */
@@ -418,18 +625,37 @@ export function debugAutoPaint(
     filaments: Filament[],
     imageSwatches: Array<{ hex: string }>,
     layerHeight: number,
-    firstLayerHeight: number
+    firstLayerHeight: number,
+    maxHeight?: number
 ): void {
-    const result = generateAutoLayers(filaments, imageSwatches, layerHeight, firstLayerHeight);
+    const result = generateAutoLayers(
+        filaments,
+        imageSwatches,
+        layerHeight,
+        firstLayerHeight,
+        maxHeight
+    );
 
-    console.group('Auto-Paint Debug');
+    console.group('🎨 Auto-Paint Debug');
     console.log('Input filaments:', filaments);
-    console.log('Total height:', result.totalHeight, 'mm');
+    console.log('Max height constraint:', maxHeight ?? 'auto');
+    console.log('---');
+    console.log('Ideal height:', result.idealHeight.toFixed(2), 'mm');
+    console.log('Actual height:', result.totalHeight.toFixed(2), 'mm');
+    console.log(
+        'Compression:',
+        result.compressionRatio < 1
+            ? `${((1 - result.compressionRatio) * 100).toFixed(1)}% compressed`
+            : 'None'
+    );
     console.log('Filament order (dark→light):', result.filamentOrder);
-    console.log('Generated layers:');
-    result.layers.forEach((layer, i) => {
+    console.log('---');
+    console.log('Transition Zones:');
+    result.transitionZones.forEach((zone, i) => {
+        const status = zone.actualThickness < zone.idealThickness ? '⚠️ compressed' : '✓';
         console.log(
-            `  ${i + 1}. ${layer.filamentColor} | ${layer.startHeight.toFixed(2)}mm → ${layer.endHeight.toFixed(2)}mm | Δ${(layer.endHeight - layer.startHeight).toFixed(2)}mm`
+            `  ${i + 1}. ${zone.filamentColor} | ${zone.startHeight.toFixed(2)}mm → ${zone.endHeight.toFixed(2)}mm | ` +
+                `Ideal: ${zone.idealThickness.toFixed(2)}mm, Actual: ${zone.actualThickness.toFixed(2)}mm ${status}`
         );
     });
     console.groupEnd();
