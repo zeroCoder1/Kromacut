@@ -955,15 +955,17 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                             {autoPaintResult && (
                                 <div className="text-[10px] text-muted-foreground">
                                     Ideal height: {autoPaintResult.idealHeight.toFixed(2)}mm
-                                    {autoPaintMaxHeight !== undefined && autoPaintResult.compressionRatio < 1 && (
-                                        <span className="ml-2 text-amber-600">
-                                            ⚠️{' '}
-                                            {((1 - autoPaintResult.compressionRatio) * 100).toFixed(
-                                                0
-                                            )}
-                                            % compressed
-                                        </span>
-                                    )}
+                                    {autoPaintMaxHeight !== undefined &&
+                                        autoPaintResult.compressionRatio < 1 && (
+                                            <span className="ml-2 text-amber-600">
+                                                ⚠️{' '}
+                                                {(
+                                                    (1 - autoPaintResult.compressionRatio) *
+                                                    100
+                                                ).toFixed(0)}
+                                                % compressed
+                                            </span>
+                                        )}
                                 </div>
                             )}
                         </div>
