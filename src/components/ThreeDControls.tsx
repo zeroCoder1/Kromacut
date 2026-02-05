@@ -17,7 +17,7 @@ import { generateAutoLayers, autoPaintToSliceHeights, type AutoPaintResult } fro
  * TD is related to how much light passes through the filament:
  * - Darker colors absorb more light → lower TD (0.3-0.8mm)
  * - Lighter colors are more transparent → higher TD (2-4mm)
- * - White is most transparent → highest TD (~4mm)
+ * - White is most transparent → highest TD (~10mm)
  * - Black is most opaque → lowest TD (~0.4mm)
  *
  * This is an approximation based on luminance with adjustments for saturation.
@@ -36,17 +36,17 @@ function estimateTDFromColor(hex: string): number {
     const min = Math.min(r, g, b);
     const saturation = max === 0 ? 0 : (max - min) / max;
 
-    // Base TD from luminance: map 0-1 luminance to 0.4-4.0 TD
+    // Base TD from luminance: map 0-1 luminance to 0.4-10.0 TD
     // Using a curve that gives more range in the middle
-    const baseTD = 0.4 + Math.pow(luminance, 0.7) * 3.6;
+    const baseTD = 0.4 + Math.pow(luminance, 0.7) * 9.6;
 
-    // Saturated colors tend to be slightly more opaque, reduce TD by up to 20%
-    const saturationPenalty = 1 - saturation * 0.2;
+    // Saturated colors tend to be slightly more opaque, reduce TD by up to 10%
+    const saturationPenalty = 1 - saturation * 0.1;
 
     const td = baseTD * saturationPenalty;
 
     // Clamp to reasonable range and round to 1 decimal
-    return Math.round(Math.max(0.3, Math.min(4.0, td)) * 10) / 10;
+    return Math.round(Math.max(0.3, Math.min(10.0, td)) * 10) / 10;
 }
 
 type Swatch = { hex: string; a: number };
@@ -389,12 +389,13 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
 
     // Filament handlers
     const addFilament = useCallback(() => {
+        const defaultColor = '#808080';
         setFilaments((prev) => [
             ...prev,
             {
                 id: Math.random().toString(36).substring(2, 9),
-                color: '#808080',
-                td: 1.0,
+                color: defaultColor,
+                td: estimateTDFromColor(defaultColor),
             },
         ]);
     }, []);
