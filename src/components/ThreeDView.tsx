@@ -292,10 +292,11 @@ export default function ThreeDView({
                             // Darker pixels = base layer height, lighter pixels = full height
                             const lum = getLuminance(r, g, bcol);
                             const normalizedLum = (lum - minLum) / (maxLum - minLum);
-                            
+
                             // Ensure darkest pixels still have at least the first layer
                             const firstLayerH = Math.max(slicerFirstLayerHeight, layerHeight);
-                            height = firstLayerH + normalizedLum * (autoPaintTotalHeight - firstLayerH);
+                            height =
+                                firstLayerH + normalizedLum * (autoPaintTotalHeight - firstLayerH);
 
                             // Snap to layer height grid
                             if (layerHeight > 0) {
@@ -474,12 +475,17 @@ export default function ThreeDView({
                                         data[idx + 2]
                                     );
                                     const normalizedLum = (lum - minLum) / (maxLum - minLum);
-                                    
+
                                     // Map luminance to height:
                                     // - Darkest pixels get height = first layer (base only)
                                     // - Lightest pixels get height = autoPaintTotalHeight (all layers)
-                                    const firstLayerH = Math.max(slicerFirstLayerHeight, colorSliceHeights[colorOrder[0]] || slicerFirstLayerHeight);
-                                    let pixelHeight = firstLayerH + normalizedLum * (autoPaintTotalHeight - firstLayerH);
+                                    const firstLayerH = Math.max(
+                                        slicerFirstLayerHeight,
+                                        colorSliceHeights[colorOrder[0]] || slicerFirstLayerHeight
+                                    );
+                                    let pixelHeight =
+                                        firstLayerH +
+                                        normalizedLum * (autoPaintTotalHeight - firstLayerH);
 
                                     // Snap to layer height grid
                                     if (layerHeight > 0) {
