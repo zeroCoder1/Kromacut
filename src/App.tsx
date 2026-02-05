@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import ThreeDControls from './components/ThreeDControls';
+import type { ThreeDControlsStateShape } from './components/ThreeDControls';
 import ThreeDView from './components/ThreeDView';
 import logo from './assets/logo.png';
 import tdTestImg from './assets/tdTest.png';
@@ -68,20 +69,15 @@ function App(): React.ReactElement | null {
     const [exportingSTL, setExportingSTL] = useState(false);
     const [exportProgress, setExportProgress] = useState(0); // 0..1
     // 3D printing shared state
-    const [threeDState, setThreeDState] = useState<{
-        layerHeight: number;
-        slicerFirstLayerHeight: number;
-        colorSliceHeights: number[];
-        colorOrder: number[];
-        filteredSwatches: { hex: string; a: number }[];
-        pixelSize: number;
-    }>({
+    const [threeDState, setThreeDState] = useState<ThreeDControlsStateShape>({
         layerHeight: 0.12,
         slicerFirstLayerHeight: 0.2,
         colorSliceHeights: [],
         colorOrder: [],
         filteredSwatches: [],
         pixelSize: 0.1,
+        filaments: [],
+        autoPaintEnabled: false,
     });
     // Signal to force a rebuild of the 3D view when incremented
     const [threeDBuildSignal, setThreeDBuildSignal] = useState(0);
@@ -153,14 +149,7 @@ function App(): React.ReactElement | null {
     });
     // Stable handler to avoid recreating function each render and to prevent redundant state sets
     const handleThreeDStateChange = useCallback(
-        (s: {
-            layerHeight: number;
-            slicerFirstLayerHeight: number;
-            colorSliceHeights: number[];
-            colorOrder: number[];
-            filteredSwatches: { hex: string; a: number }[];
-            pixelSize: number;
-        }) => {
+        (s: ThreeDControlsStateShape) => {
             setThreeDState((prev) => {
                 if (
                     prev.layerHeight === s.layerHeight &&
@@ -168,7 +157,9 @@ function App(): React.ReactElement | null {
                     prev.colorSliceHeights === s.colorSliceHeights &&
                     prev.colorOrder === s.colorOrder &&
                     prev.filteredSwatches === s.filteredSwatches &&
-                    prev.pixelSize === s.pixelSize
+                    prev.pixelSize === s.pixelSize &&
+                    prev.filaments === s.filaments &&
+                    prev.autoPaintEnabled === s.autoPaintEnabled
                 ) {
                     return prev; // no change; avoid triggering rerender cascade
                 }
