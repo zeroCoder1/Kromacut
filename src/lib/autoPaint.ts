@@ -331,12 +331,14 @@ export function generateAutoLayers(
 /**
  * Convert auto-paint layers to the format expected by ThreeDView.
  *
+ * This function generates MULTIPLE layers at each layerHeight increment,
+ * creating a graduated effect where higher layers cover progressively
+ * fewer pixels (only the lightest ones).
+ *
  * ThreeDView expects:
  * - colorSliceHeights: height for each swatch index
  * - colorOrder: ordering of swatch indices
- *
- * For auto-paint, we create "virtual" swatches from the filament colors
- * and generate the appropriate heights for each layer.
+ * - virtualSwatches: colors for each layer
  */
 export function autoPaintToSliceHeights(
     result: AutoPaintResult,
@@ -347,7 +349,7 @@ export function autoPaintToSliceHeights(
     colorOrder: number[];
     virtualSwatches: Array<{ hex: string; a: number }>;
 } {
-    if (result.layers.length === 0) {
+    if (result.layers.length === 0 || result.totalHeight <= 0) {
         return {
             colorSliceHeights: [],
             colorOrder: [],
@@ -355,37 +357,54 @@ export function autoPaintToSliceHeights(
         };
     }
 
-    // Create virtual swatches from the filament layers
     const virtualSwatches: Array<{ hex: string; a: number }> = [];
     const colorSliceHeights: number[] = [];
     const colorOrder: number[] = [];
 
-    result.layers.forEach((layer, index) => {
-        // Add a virtual swatch for this layer
-        virtualSwatches.push({
-            hex: layer.filamentColor,
-            a: 255, // Fully opaque
-        });
+    // Generate layers at each layerHeight increment from 0 to totalHeight
+    // Each layer gets the color of whichever filament is active at that Z height
+    let currentZ = 0;
+    let layerIndex = 0;
 
-        // Calculate the thickness of this layer
-        const thickness = layer.endHeight - layer.startHeight;
+    while (currentZ < result.totalHeight) {
+        // Determine thickness for this layer
+        const thickness = layerIndex === 0 
+            ? Math.max(firstLayerHeight, layerHeight)
+            : layerHeight;
+        
+        const layerTopZ = currentZ + thickness;
 
-        // Snap to layer height grid
-        let snappedThickness: number;
-        if (index === 0) {
-            // First layer must respect firstLayerHeight
-            snappedThickness = Math.max(firstLayerHeight, thickness);
-        } else {
-            snappedThickness = Math.max(layerHeight, thickness);
+        // Find which filament is active at this Z height
+        // (find the layer whose range contains currentZ)
+        let activeColor = result.layers[0].filamentColor;
+        for (const layer of result.layers) {
+            if (currentZ >= layer.startHeight && currentZ < layer.endHeight) {
+                activeColor = layer.filamentColor;
+                break;
+            }
+            // If we're past the layer's end, this might be the active one
+            if (currentZ >= layer.startHeight) {
+                activeColor = layer.filamentColor;
+            }
         }
 
-        // Round to nearest layer height multiple
-        const multiple = Math.round(snappedThickness / layerHeight) * layerHeight;
-        snappedThickness = Math.max(index === 0 ? firstLayerHeight : layerHeight, multiple);
+        // Add this layer
+        virtualSwatches.push({
+            hex: activeColor,
+            a: 255,
+        });
+        colorSliceHeights.push(Number(thickness.toFixed(8)));
+        colorOrder.push(layerIndex);
 
-        colorSliceHeights.push(Number(snappedThickness.toFixed(8)));
-        colorOrder.push(index);
-    });
+        currentZ = layerTopZ;
+        layerIndex++;
+
+        // Safety limit to prevent infinite loops
+        if (layerIndex > 500) {
+            console.warn('autoPaintToSliceHeights: too many layers, stopping at 500');
+            break;
+        }
+    }
 
     return {
         colorSliceHeights,
