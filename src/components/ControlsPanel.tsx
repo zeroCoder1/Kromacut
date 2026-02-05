@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { NumberInput } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -40,6 +40,19 @@ export const ControlsPanel: React.FC<Props> = ({
     selectedPalette,
     onPaletteSelect,
 }) => {
+    // Local state for relaxed typing
+    const [localColors, setLocalColors] = useState(finalColors);
+    const [localWeight, setLocalWeight] = useState(weight);
+
+    // Sync from parent props
+    useEffect(() => {
+        setLocalColors(finalColors);
+    }, [finalColors]);
+
+    useEffect(() => {
+        setLocalWeight(weight);
+    }, [weight]);
+
     return (
         <Card className="p-4 border border-border/50 space-y-4">
             <div>
@@ -112,12 +125,19 @@ export const ControlsPanel: React.FC<Props> = ({
                             id="final-colors"
                             min={2}
                             max={256}
-                            value={finalColors}
-                            onChange={(e) =>
-                                onFinalColorsChange(
-                                    Math.max(2, Math.min(256, Number(e.target.value) || 2))
-                                )
-                            }
+                            value={localColors}
+                            onChange={(e) => {
+                                const v = Number(e.target.value);
+                                if (!Number.isNaN(v)) {
+                                    setLocalColors(v);
+                                }
+                            }}
+                            onBlur={() => {
+                                // clamp and commit on blur
+                                const clamped = Math.max(2, Math.min(256, localColors));
+                                setLocalColors(clamped);
+                                onFinalColorsChange(clamped);
+                            }}
                         />
                     </div>
                     <div className="space-y-2">
@@ -130,13 +150,19 @@ export const ControlsPanel: React.FC<Props> = ({
                             id="weight"
                             min={2}
                             max={256}
-                            value={weight}
+                            value={localWeight}
                             disabled={weightDisabled}
-                            onChange={(e) =>
-                                onWeightChange(
-                                    Math.max(2, Math.min(256, Number(e.target.value) || 2))
-                                )
-                            }
+                            onChange={(e) => {
+                                const v = Number(e.target.value);
+                                if (!Number.isNaN(v)) {
+                                    setLocalWeight(v);
+                                }
+                            }}
+                            onBlur={() => {
+                                const clamped = Math.max(2, Math.min(256, localWeight));
+                                setLocalWeight(clamped);
+                                onWeightChange(clamped);
+                            }}
                         />
                     </div>
                     <div className="space-y-2">
