@@ -117,7 +117,22 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
             }
         }
         // Fallback / append any remaining colors not yet in order.
-        for (let i = 0; i < filtered.length; i++) if (!nextOrder.includes(i)) nextOrder.push(i);
+        const remaining: number[] = [];
+        for (let i = 0; i < filtered.length; i++) {
+            if (!nextOrder.includes(i)) remaining.push(i);
+        }
+
+        // Sort remaining colors by luminance (dark -> light)
+        const getLum = (hex: string) => {
+            const c = hex.replace('#', '');
+            const r = parseInt(c.slice(0, 2), 16) / 255;
+            const g = parseInt(c.slice(2, 4), 16) / 255;
+            const b = parseInt(c.slice(4, 6), 16) / 255;
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        };
+        remaining.sort((a, b) => getLum(filtered[a].hex) - getLum(filtered[b].hex));
+
+        nextOrder.push(...remaining);
         setColorOrder(nextOrder);
 
         // Stash for next diff
