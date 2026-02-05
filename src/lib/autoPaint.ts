@@ -224,6 +224,12 @@ export function getOpacity(filamentTD: number, thickness: number): number {
 const DELTA_E_THRESHOLD = 2.3; // "Just noticeable difference"
 
 /**
+ * Frontlit prints behave optically like a much shorter effective TD.
+ * Scale user-entered TD values down for internal simulation.
+ */
+const FRONTLIT_TD_SCALE = 0.1;
+
+/**
  * Simulate adding filament layers until the blended color matches the
  * target pure filament color (DeltaE < threshold), or until the filament
  * is effectively opaque (opacity target reached).
@@ -248,17 +254,27 @@ export function calculateTransitionThickness(
     let thickness = 0;
     let currentColor = backgroundColor;
 
-    // Cap at 1x TD — beyond this the filament is already ~90% opaque
-    // and adding more doesn't meaningfully change the perceived color.
-    // At thickness == TD, transmission = 10% (90% opaque by definition).
-    const maxThickness = Math.max(layerHeight, filamentTD);
+    // The cap determines the absolute maximum transition thickness.
+    // At 0.7×TD, opacity ≈ 80%. At 1×TD, opacity ≈ 90%.
+    // For transitions between adjacent colors in a sorted stack,
+    // DeltaE convergence typically fires well before this cap.
+    // We use 0.7×TD — if the color hasn't converged by ~80% opacity,
+    // additional thickness gives diminishing visual returns.
+    const OPACITY_CAP = 0.7;
+    const maxThickness = Math.max(layerHeight, filamentTD * OPACITY_CAP);
 
     // Simulate adding layers until color converges or we hit the cap
     while (thickness < maxThickness) {
         thickness += layerHeight;
         currentColor = blendColors(backgroundColor, filamentColor, filamentTD, thickness);
 
+        // Stop if the blended color is perceptually close to the target
         if (deltaE(currentColor, filamentColor) < DELTA_E_THRESHOLD) {
+            break;
+        }
+
+        // Also stop if opacity is already very high — diminishing returns
+        if (getOpacity(filamentTD, thickness) > 0.85) {
             break;
         }
     }
@@ -292,10 +308,17 @@ export function calculateIdealHeight(
     let currentBackgroundColor = hexToRgb(sortedFilaments[0].color);
 
     // Zone 1: Foundation layer (darkest filament)
-    // Need enough to be fully opaque so we don't see the light source.
-    // Dark filaments have low TD (e.g. 0.5mm), so base + a bit extra is fine.
+    // Needs to be opaque enough to block the backlight.
+    // Using Beer-Lambert: for 95% opacity → transmission = 5%
+    //   0.05 = 10^(-thickness/TD)  →  thickness = TD × log10(20) ≈ TD × 1.3
+    // Dark filaments have low TD (e.g. 0.5mm) → foundation ≈ 0.65mm
     const firstFilament = sortedFilaments[0];
-    const foundationThickness = Math.max(baseThickness, firstFilament.td);
+    const opacityThickness = firstFilament.td * 1.3; // 95% opaque
+    // Ensure at least the base thickness, snap to layer height grid
+    const foundationThickness = Math.max(
+        baseThickness,
+        Math.ceil(opacityThickness / layerHeight) * layerHeight
+    );
 
     zones.push({
         filamentId: firstFilament.id,
@@ -442,18 +465,26 @@ export function generateAutoLayers(
 
     const filamentOrder = sortedFilaments.map((f) => f.id);
 
+    // Apply frontlit TD scale for internal simulation
+    const scaledFilaments = sortedFilaments.map((f) => ({
+        ...f,
+        td: f.td * FRONTLIT_TD_SCALE,
+    }));
+
     // --- STEP 3: CALCULATE IDEAL HEIGHT WITH TRANSITION ZONES ---
     const { idealHeight, zones } = calculateIdealHeight(
-        sortedFilaments.map((f) => ({ id: f.id, color: f.color, td: f.td })),
+        scaledFilaments.map((f) => ({ id: f.id, color: f.color, td: f.td })),
         layerHeight,
         Math.max(firstLayerHeight, 0.6)
     );
 
     // --- STEP 4: APPLY COMPRESSION IF NEEDED ---
-    // When user hasn't set a max height, default to a practical value.
-    // Most lithophane prints are 2-4mm tall. We default to 3mm.
-    const DEFAULT_MAX_HEIGHT = 3.0;
-    const autoHeight = Math.min(idealHeight, DEFAULT_MAX_HEIGHT);
+    // autoHeight = idealHeight — the physics-derived value from the
+    // DeltaE convergence simulation. This is the height the algorithm
+    // determines is needed for accurate color reproduction.
+    // No hardcoded cap — each transition zone is already bounded by
+    // opacity thresholds (85%) and DeltaE convergence (< 2.3).
+    const autoHeight = idealHeight;
     const targetMaxHeight = maxHeight ?? autoHeight;
     const { compressedZones, compressionRatio } = compressZones(zones, targetMaxHeight);
 
@@ -492,7 +523,7 @@ export function calculateRecommendedHeight(
     if (filaments.length === 0) return 2.0;
 
     // Sum of TDs gives a rough estimate of total transition space needed
-    const totalTD = filaments.reduce((sum, f) => sum + f.td, 0);
+    const totalTD = filaments.reduce((sum, f) => sum + f.td * FRONTLIT_TD_SCALE, 0);
 
     // Typically need about 0.8x to 1.2x the sum of TDs
     const estimated = totalTD * 0.9;
