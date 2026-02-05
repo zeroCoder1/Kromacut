@@ -421,7 +421,10 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                                 onChange={(e) => {
                                     const v = Number(e.target.value);
                                     if (Number.isNaN(v)) return;
-                                    setPixelSize(Math.max(0.01, Math.min(10, v)));
+                                    setPixelSize(Math.min(10, v));
+                                }}
+                                onBlur={() => {
+                                    setPixelSize((prev) => Math.max(0.01, prev));
                                 }}
                             />
                         </label>
@@ -443,9 +446,12 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                                 value={layerHeight}
                                 onChange={(e) => {
                                     const v = Number(e.target.value);
-                                    if (!Number.isNaN(v) && v >= 0.01 && v <= 10 && isFinite(v)) {
+                                    if (!Number.isNaN(v) && v >= 0 && v <= 10 && isFinite(v)) {
                                         setLayerHeight(v);
                                     }
+                                }}
+                                onBlur={() => {
+                                    setLayerHeight((prev) => Math.max(0.01, prev));
                                 }}
                             />
                         </label>
