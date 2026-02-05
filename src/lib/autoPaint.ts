@@ -223,7 +223,8 @@ const DELTA_E_THRESHOLD = 2.3; // "Just noticeable difference"
 
 /**
  * Simulate adding filament layers until the blended color matches the
- * target pure filament color (DeltaE < threshold).
+ * target pure filament color (DeltaE < threshold), or until the filament
+ * is effectively opaque (opacity target reached).
  *
  * @param backgroundColor - Starting background color
  * @param filamentColor - Target filament color
@@ -244,9 +245,13 @@ export function calculateTransitionThickness(
 
     let thickness = 0;
     let currentColor = backgroundColor;
-    const maxThickness = filamentTD * 3; // Safety cap: 3x TD is definitely opaque
 
-    // Simulate adding layers until we match the target
+    // Cap at 1x TD — beyond this the filament is already ~90% opaque
+    // and adding more doesn't meaningfully change the perceived color.
+    // At thickness == TD, transmission = 10% (90% opaque by definition).
+    const maxThickness = Math.max(layerHeight, filamentTD);
+
+    // Simulate adding layers until color converges or we hit the cap
     while (thickness < maxThickness) {
         thickness += layerHeight;
         currentColor = blendColors(backgroundColor, filamentColor, filamentTD, thickness);
@@ -256,7 +261,8 @@ export function calculateTransitionThickness(
         }
     }
 
-    return thickness;
+    // Snap to layerHeight grid
+    return Math.min(thickness, maxThickness);
 }
 
 /**
@@ -284,9 +290,10 @@ export function calculateIdealHeight(
     let currentBackgroundColor = hexToRgb(sortedFilaments[0].color);
 
     // Zone 1: Foundation layer (darkest filament)
-    // Need enough to be fully opaque so we don't see the light source
+    // Need enough to be fully opaque so we don't see the light source.
+    // Dark filaments have low TD (e.g. 0.5mm), so base + a bit extra is fine.
     const firstFilament = sortedFilaments[0];
-    const foundationThickness = Math.max(baseThickness, firstFilament.td * 0.8);
+    const foundationThickness = Math.max(baseThickness, firstFilament.td);
 
     zones.push({
         filamentId: firstFilament.id,
@@ -437,7 +444,10 @@ export function generateAutoLayers(
     );
 
     // --- STEP 4: APPLY COMPRESSION IF NEEDED ---
-    const targetMaxHeight = maxHeight ?? idealHeight;
+    // When user hasn't set a max height, default to a practical value.
+    // Most lithophane prints are 2-4mm tall. We default to 3mm.
+    const DEFAULT_MAX_HEIGHT = 3.0;
+    const targetMaxHeight = maxHeight ?? Math.min(idealHeight, DEFAULT_MAX_HEIGHT);
     const { compressedZones, compressionRatio } = compressZones(zones, targetMaxHeight);
 
     // --- STEP 5: GENERATE LAYER SEGMENTS FROM ZONES ---
