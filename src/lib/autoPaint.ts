@@ -314,11 +314,8 @@ export function calculateIdealHeight(
     // Dark filaments have low TD (e.g. 0.5mm) → foundation ≈ 0.65mm
     const firstFilament = sortedFilaments[0];
     const opacityThickness = firstFilament.td * 1.3; // 95% opaque
-    // Ensure at least the base thickness, snap to layer height grid
-    const foundationThickness = Math.max(
-        baseThickness,
-        Math.ceil(opacityThickness / layerHeight) * layerHeight
-    );
+    // Ensure at least the base thickness (avoid unnecessary extra layers)
+    const foundationThickness = Math.max(baseThickness, opacityThickness);
 
     zones.push({
         filamentId: firstFilament.id,
@@ -475,7 +472,7 @@ export function generateAutoLayers(
     const { idealHeight, zones } = calculateIdealHeight(
         scaledFilaments.map((f) => ({ id: f.id, color: f.color, td: f.td })),
         layerHeight,
-        Math.max(firstLayerHeight, 0.6)
+        Math.max(firstLayerHeight, layerHeight)
     );
 
     // --- STEP 4: APPLY COMPRESSION IF NEEDED ---
