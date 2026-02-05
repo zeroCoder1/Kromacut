@@ -156,17 +156,37 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
     }, []);
 
     const handleResetHeights = useCallback(() => {
-        if (displayOrder.length === 0) return;
-        const next = [...colorSliceHeights];
-        displayOrder.forEach((fi, idx) => {
+        if (filtered.length === 0) return;
+
+        // Reset heights based on default logic
+        // First, re-sort indices by luminance to establish the "default" order
+        const getLum = (hex: string) => {
+            const c = hex.replace('#', '');
+            const r = parseInt(c.slice(0, 2), 16) / 255;
+            const g = parseInt(c.slice(2, 4), 16) / 255;
+            const b = parseInt(c.slice(4, 6), 16) / 255;
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        };
+
+        // Create an array of indices [0, 1, ..., N-1]
+        const indices = filtered.map((_, i) => i);
+        // Sort indices based on the luminance of the swatch at that index
+        indices.sort((a, b) => getLum(filtered[a].hex) - getLum(filtered[b].hex));
+
+        // Now reset heights. Since we are resetting everything, we can assign the
+        // "first layer height" logic to the first item in the NEW sorted order.
+        const nextHeights = [...colorSliceHeights];
+        indices.forEach((fi, idx) => {
             if (idx === 0) {
-                next[fi] = Math.max(layerHeight, slicerFirstLayerHeight);
+                nextHeights[fi] = Math.max(layerHeight, slicerFirstLayerHeight);
             } else {
-                next[fi] = layerHeight;
+                nextHeights[fi] = layerHeight;
             }
         });
-        setColorSliceHeights(next);
-    }, [displayOrder, colorSliceHeights, layerHeight, slicerFirstLayerHeight]);
+
+        setColorOrder(indices);
+        setColorSliceHeights(nextHeights);
+    }, [filtered, colorSliceHeights, layerHeight, slicerFirstLayerHeight]);
 
     // Handle sortable reordering
     const handleColorOrderChange = useCallback((newOrder: string[]) => {
