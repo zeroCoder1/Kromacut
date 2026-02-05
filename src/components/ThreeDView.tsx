@@ -289,10 +289,13 @@ export default function ThreeDView({
                     if (opaque) {
                         if (autoPaintEnabled && autoPaintTotalHeight) {
                             // Auto-paint mode: map luminance to height
-                            // Darker pixels = lower height, lighter pixels = higher height
+                            // Darker pixels = base layer height, lighter pixels = full height
                             const lum = getLuminance(r, g, bcol);
                             const normalizedLum = (lum - minLum) / (maxLum - minLum);
-                            height = normalizedLum * autoPaintTotalHeight;
+                            
+                            // Ensure darkest pixels still have at least the first layer
+                            const firstLayerH = Math.max(slicerFirstLayerHeight, layerHeight);
+                            height = firstLayerH + normalizedLum * (autoPaintTotalHeight - firstLayerH);
 
                             // Snap to layer height grid
                             if (layerHeight > 0) {
@@ -452,7 +455,8 @@ export default function ThreeDView({
                         const topZ = cumulativeHeights[i];
 
                         // Identify active pixels for this layer
-                        // A pixel is active if its luminance-based height falls within [baseZ, topZ]
+                        // A pixel is active if its height extends THROUGH this entire layer
+                        // (pixelHeight >= topZ means the pixel column reaches at least to the top of this layer)
                         const activePixels = new Uint8Array(boxW * boxH);
                         let activeCount = 0;
 
@@ -470,7 +474,12 @@ export default function ThreeDView({
                                         data[idx + 2]
                                     );
                                     const normalizedLum = (lum - minLum) / (maxLum - minLum);
-                                    let pixelHeight = normalizedLum * autoPaintTotalHeight;
+                                    
+                                    // Map luminance to height:
+                                    // - Darkest pixels get height = first layer (base only)
+                                    // - Lightest pixels get height = autoPaintTotalHeight (all layers)
+                                    const firstLayerH = Math.max(slicerFirstLayerHeight, colorSliceHeights[colorOrder[0]] || slicerFirstLayerHeight);
+                                    let pixelHeight = firstLayerH + normalizedLum * (autoPaintTotalHeight - firstLayerH);
 
                                     // Snap to layer height grid
                                     if (layerHeight > 0) {
@@ -484,8 +493,9 @@ export default function ThreeDView({
                                         pixelHeight = Math.max(slicerFirstLayerHeight, pixelHeight);
                                     }
 
-                                    // Include this pixel if its height is >= topZ of this layer
-                                    // (meaning it extends through this layer)
+                                    // Include this pixel if its height extends THROUGH this layer
+                                    // pixelHeight >= topZ means the column reaches the top of this layer
+                                    // This creates the graduated effect: higher layers have fewer pixels
                                     if (pixelHeight >= topZ - 0.001) {
                                         activePixels[(boxH - 1 - y) * boxW + x] = 1;
                                         activeCount++;
