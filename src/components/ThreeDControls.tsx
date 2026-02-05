@@ -886,60 +886,72 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                     </Button>
 
                     {/* Auto-paint computed layers preview */}
-                    {autoPaintEnabled && autoPaintSliceData && autoPaintSliceData.virtualSwatches.length > 0 && (
-                        <>
-                            <div className="h-px bg-border/50 my-4" />
-                            <div className="space-y-2">
-                                <div className="flex items-center gap-2">
-                                    <Sparkles className="w-4 h-4 text-amber-500" />
-                                    <span className="text-xs font-semibold text-foreground">
-                                        Computed Layers
-                                    </span>
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-                                        {autoPaintSliceData.virtualSwatches.length} layers
-                                    </span>
-                                </div>
-                                <div className="text-[10px] text-muted-foreground">
-                                    Total height: {autoPaintSliceData.colorSliceHeights.reduce((sum, h) => sum + h, 0).toFixed(2)}mm
-                                </div>
-                                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                                    {(() => {
-                                        // Calculate cumulative heights for display
-                                        let cumulativeHeight = 0;
-                                        return autoPaintSliceData.virtualSwatches.map((swatch, idx) => {
-                                            const thickness = autoPaintSliceData.colorSliceHeights[idx] || 0;
-                                            const startHeight = cumulativeHeight;
-                                            const endHeight = cumulativeHeight + thickness;
-                                            cumulativeHeight = endHeight;
-                                            return (
-                                                <div
-                                                    key={`layer-${idx}`}
-                                                    className="flex items-center gap-2 p-2 rounded-md bg-muted/30 border border-border/30"
-                                                >
-                                                    <span
-                                                        className="w-4 h-4 rounded-full border border-border flex-shrink-0"
-                                                        style={{ backgroundColor: swatch.hex }}
-                                                    />
-                                                    <div className="flex-1 min-w-0">
-                                                        <div className="text-[10px] font-mono text-foreground">
-                                                            Layer {idx + 1}: {swatch.hex}
+                    {autoPaintEnabled &&
+                        autoPaintSliceData &&
+                        autoPaintSliceData.virtualSwatches.length > 0 && (
+                            <>
+                                <div className="h-px bg-border/50 my-4" />
+                                <div className="space-y-2">
+                                    <div className="flex items-center gap-2">
+                                        <Sparkles className="w-4 h-4 text-amber-500" />
+                                        <span className="text-xs font-semibold text-foreground">
+                                            Computed Layers
+                                        </span>
+                                        <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
+                                            {autoPaintSliceData.virtualSwatches.length} layers
+                                        </span>
+                                    </div>
+                                    <div className="text-[10px] text-muted-foreground">
+                                        Total height:{' '}
+                                        {autoPaintSliceData.colorSliceHeights
+                                            .reduce((sum, h) => sum + h, 0)
+                                            .toFixed(2)}
+                                        mm
+                                    </div>
+                                    <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                                        {(() => {
+                                            // Calculate cumulative heights for display
+                                            let cumulativeHeight = 0;
+                                            return autoPaintSliceData.virtualSwatches.map(
+                                                (swatch, idx) => {
+                                                    const thickness =
+                                                        autoPaintSliceData.colorSliceHeights[idx] ||
+                                                        0;
+                                                    const startHeight = cumulativeHeight;
+                                                    const endHeight = cumulativeHeight + thickness;
+                                                    cumulativeHeight = endHeight;
+                                                    return (
+                                                        <div
+                                                            key={`layer-${idx}`}
+                                                            className="flex items-center gap-2 p-2 rounded-md bg-muted/30 border border-border/30"
+                                                        >
+                                                            <span
+                                                                className="w-4 h-4 rounded-full border border-border flex-shrink-0"
+                                                                style={{
+                                                                    backgroundColor: swatch.hex,
+                                                                }}
+                                                            />
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="text-[10px] font-mono text-foreground">
+                                                                    Layer {idx + 1}: {swatch.hex}
+                                                                </div>
+                                                                <div className="text-[9px] text-muted-foreground">
+                                                                    {startHeight.toFixed(2)}mm →{' '}
+                                                                    {endHeight.toFixed(2)}mm
+                                                                    <span className="ml-1 text-primary">
+                                                                        (Δ{thickness.toFixed(2)}mm)
+                                                                    </span>
+                                                                </div>
+                                                            </div>
                                                         </div>
-                                                        <div className="text-[9px] text-muted-foreground">
-                                                            {startHeight.toFixed(2)}mm →{' '}
-                                                            {endHeight.toFixed(2)}mm
-                                                            <span className="ml-1 text-primary">
-                                                                (Δ{thickness.toFixed(2)}mm)
-                                                            </span>
-                                                        </div>
-                                                    </div>
-                                                </div>
+                                                    );
+                                                }
                                             );
-                                        });
-                                    })()}
+                                        })()}
+                                    </div>
                                 </div>
-                            </div>
-                        </>
-                    )}
+                            </>
+                        )}
 
                     {/* Warning when auto-paint is enabled but no filaments */}
                     {autoPaintEnabled && filaments.length === 0 && (
