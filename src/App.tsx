@@ -26,6 +26,33 @@ import ResizableSplitter from './components/ResizableSplitter';
 import { ControlsPanel } from './components/ControlsPanel';
 // ...existing imports
 
+const AUTOPAINT_STORAGE_KEY = 'kromacut.autopaint.v1';
+
+type AutoPaintPersisted = Pick<ThreeDControlsStateShape, 'filaments' | 'autoPaintEnabled'>;
+
+const loadAutoPaintPersisted = (): AutoPaintPersisted | null => {
+    try {
+        const raw = localStorage.getItem(AUTOPAINT_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as AutoPaintPersisted;
+        if (!parsed || !Array.isArray(parsed.filaments)) return null;
+        return {
+            filaments: parsed.filaments,
+            autoPaintEnabled: Boolean(parsed.autoPaintEnabled),
+        };
+    } catch {
+        return null;
+    }
+};
+
+const saveAutoPaintPersisted = (value: AutoPaintPersisted) => {
+    try {
+        localStorage.setItem(AUTOPAINT_STORAGE_KEY, JSON.stringify(value));
+    } catch {
+        // ignore storage errors
+    }
+};
+
 function App(): React.ReactElement | null {
     // dropzone state managed by hook below
     // `weight` is the algorithm parameter; `finalColors` is the postprocess target
@@ -69,19 +96,29 @@ function App(): React.ReactElement | null {
     const [exportingSTL, setExportingSTL] = useState(false);
     const [exportProgress, setExportProgress] = useState(0); // 0..1
     // 3D printing shared state
-    const [threeDState, setThreeDState] = useState<ThreeDControlsStateShape>({
-        layerHeight: 0.12,
-        slicerFirstLayerHeight: 0.2,
-        colorSliceHeights: [],
-        colorOrder: [],
-        filteredSwatches: [],
-        pixelSize: 0.1,
-        filaments: [],
-        autoPaintEnabled: false,
+    const [threeDState, setThreeDState] = useState<ThreeDControlsStateShape>(() => {
+        const persisted = loadAutoPaintPersisted();
+        return {
+            layerHeight: 0.12,
+            slicerFirstLayerHeight: 0.2,
+            colorSliceHeights: [],
+            colorOrder: [],
+            filteredSwatches: [],
+            pixelSize: 0.1,
+            filaments: persisted?.filaments ?? [],
+            autoPaintEnabled: persisted?.autoPaintEnabled ?? false,
+        };
     });
     // Signal to force a rebuild of the 3D view when incremented
     const [threeDBuildSignal, setThreeDBuildSignal] = useState(0);
     const prevModeRef = useRef<typeof mode>(mode);
+
+    useEffect(() => {
+        saveAutoPaintPersisted({
+            filaments: threeDState.filaments,
+            autoPaintEnabled: threeDState.autoPaintEnabled ?? false,
+        });
+    }, [threeDState.filaments, threeDState.autoPaintEnabled]);
 
     // When the user switches to 3D mode, trigger the rebuild signal (same effect as the Rebuild button).
     // Schedule the rebuild on a short timeout so that the ThreeDControls have a chance to mount
