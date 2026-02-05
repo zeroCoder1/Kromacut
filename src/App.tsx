@@ -144,6 +144,9 @@ function App(): React.ReactElement | null {
                 exportObjectTo3MFBlob(obj, {
                     layerHeight: threeDState.layerHeight,
                     firstLayerHeight: threeDState.slicerFirstLayerHeight,
+                    layerFilamentColors: threeDState.autoPaintEnabled
+                        ? threeDState.autoPaintFilamentSwatches?.map((s) => s.hex)
+                        : undefined,
                 }),
             applyQuantize,
             swatches,
@@ -161,7 +164,8 @@ function App(): React.ReactElement | null {
                 prev.filaments === s.filaments &&
                 prev.autoPaintEnabled === s.autoPaintEnabled &&
                 prev.autoPaintResult === s.autoPaintResult &&
-                prev.autoPaintSwatches === s.autoPaintSwatches
+                prev.autoPaintSwatches === s.autoPaintSwatches &&
+                prev.autoPaintFilamentSwatches === s.autoPaintFilamentSwatches
             ) {
                 return prev; // no change; avoid triggering rerender cascade
             }

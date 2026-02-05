@@ -556,16 +556,19 @@ export function autoPaintToSliceHeights(
     colorSliceHeights: number[];
     colorOrder: number[];
     virtualSwatches: Array<{ hex: string; a: number }>;
+    filamentSwatches: Array<{ hex: string; a: number }>;
 } {
     if (result.layers.length === 0 || result.totalHeight <= 0) {
         return {
             colorSliceHeights: [],
             colorOrder: [],
             virtualSwatches: [],
+            filamentSwatches: [],
         };
     }
 
     const virtualSwatches: Array<{ hex: string; a: number }> = [];
+    const filamentSwatches: Array<{ hex: string; a: number }> = [];
     const colorSliceHeights: number[] = [];
     const colorOrder: number[] = [];
 
@@ -621,6 +624,7 @@ export function autoPaintToSliceHeights(
         }
 
         virtualSwatches.push({ hex: rgbToHex(blendedColor), a: 255 });
+        filamentSwatches.push({ hex: zone.filamentColor, a: 255 });
         colorSliceHeights.push(Number(thickness.toFixed(8)));
         colorOrder.push(layerIndex);
 
@@ -637,6 +641,7 @@ export function autoPaintToSliceHeights(
         colorSliceHeights,
         colorOrder,
         virtualSwatches,
+        filamentSwatches,
     };
 }
 

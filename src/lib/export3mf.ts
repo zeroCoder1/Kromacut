@@ -5,6 +5,7 @@ import { MINIMAL_PROJECT_SETTINGS, KROMACUT_CONFIG } from './slicerDefaults';
 export interface Export3MFOptions {
     layerHeight?: number;
     firstLayerHeight?: number;
+    layerFilamentColors?: string[]; // Optional per-layer filament colors (hex) for export
 }
 
 function generateUUID() {
@@ -58,10 +59,19 @@ export async function exportObjectTo3MFBlob(
     const colorMap = new Map<string, number>();
     const colors: string[] = [];
 
-    const getMaterialIndex = (material: THREE.Material | THREE.Material[]): number => {
+    const normalizeHex = (hex?: string): string | null => {
+        if (!hex) return null;
+        const cleaned = hex.replace('#', '').toUpperCase();
+        return cleaned.length === 6 ? cleaned : null;
+    };
+
+    const getMaterialIndex = (
+        material: THREE.Material | THREE.Material[],
+        overrideHex?: string
+    ): number => {
         const mat = Array.isArray(material) ? material[0] : material;
-        let hex = 'FFFFFF';
-        if ('color' in mat && (mat as THREE.MeshStandardMaterial).color) {
+        let hex = normalizeHex(overrideHex) || 'FFFFFF';
+        if (!overrideHex && 'color' in mat && (mat as THREE.MeshStandardMaterial).color) {
             hex = (mat as THREE.MeshStandardMaterial).color.getHexString().toUpperCase();
         }
         if (!colorMap.has(hex)) {
@@ -72,8 +82,9 @@ export async function exportObjectTo3MFBlob(
     };
 
     // Pre-calculate all materials so we can write the header correctly
-    for (const mesh of meshes) {
-        getMaterialIndex(mesh.material);
+    for (let i = 0; i < meshes.length; i++) {
+        const overrideHex = options?.layerFilamentColors?.[i];
+        getMaterialIndex(meshes[i].material, overrideHex);
     }
 
     // Prepare Project Settings (Minimal)
@@ -174,12 +185,13 @@ export async function exportObjectTo3MFBlob(
 
     for (let i = 0; i < meshes.length; i++) {
         const mesh = meshes[i];
-        const matIdx = getMaterialIndex(mesh.material);
+        const overrideHex = options?.layerFilamentColors?.[i];
+        const matIdx = getMaterialIndex(mesh.material, overrideHex);
         const objectId = nextId++;
         componentIds.push(objectId);
 
-        let hex = 'FFFFFF';
-        if ('color' in mesh.material && (mesh.material as THREE.MeshStandardMaterial).color) {
+        let hex = normalizeHex(overrideHex) || 'FFFFFF';
+        if (!overrideHex && 'color' in mesh.material && (mesh.material as THREE.MeshStandardMaterial).color) {
             hex = (mesh.material as THREE.MeshStandardMaterial).color.getHexString().toUpperCase();
         }
         // Use 1-based index for color/extruder

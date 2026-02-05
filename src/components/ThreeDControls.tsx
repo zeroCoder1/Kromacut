@@ -72,6 +72,7 @@ export interface ThreeDControlsStateShape {
     // Auto-paint computed state (only used when autoPaintEnabled is true)
     autoPaintResult?: AutoPaintResult;
     autoPaintSwatches?: Swatch[];
+    autoPaintFilamentSwatches?: Swatch[];
 }
 
 interface ThreeDControlsProps {
@@ -478,6 +479,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                 autoPaintEnabled,
                 autoPaintResult,
                 autoPaintSwatches: autoPaintSliceData.virtualSwatches,
+                autoPaintFilamentSwatches: autoPaintSliceData.filamentSwatches,
             };
             setAppliedSignature(currentSignature);
             onChange(next);
