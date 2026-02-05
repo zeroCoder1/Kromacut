@@ -56,12 +56,15 @@ export const ControlsPanel: React.FC<Props> = ({
     return (
         <Card className="p-4 border border-border/50 space-y-4">
             <div>
-                <h3 className="text-sm font-semibold text-foreground mb-4">
-                    Quantization Settings
-                </h3>
-                <p className="text-xs text-muted-foreground mb-4">
-                    Configure palette and reduce colors
-                </p>
+                <div>
+                    <h3 className="text-sm font-semibold text-foreground">
+                        Quantization Settings
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-1">
+                        Configure palette and reduce colors
+                    </p>
+                </div>
+                <div className="h-px bg-border/50 my-4" />
                 <div className="space-y-4">
                     <div className="space-y-2">
                         <Label htmlFor="palette-select" className="font-medium">
@@ -183,7 +186,6 @@ export const ControlsPanel: React.FC<Props> = ({
                             </SelectContent>
                         </Select>
                     </div>
-                    <div className="h-px bg-border/50" />
                 </div>
             </div>
             <Button

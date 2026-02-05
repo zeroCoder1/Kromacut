@@ -601,12 +601,13 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
 
             {/* Printing Parameters Card */}
             <Card className="p-4 border border-border/50">
-                <div className="space-y-1 mb-4">
+                <div className="space-y-1">
                     <h3 className="text-sm font-semibold text-foreground">3D Print Settings</h3>
                     <p className="text-xs text-muted-foreground">
                         Configure your printing parameters
                     </p>
                 </div>
+                <div className="h-px bg-border/50 my-4" />
                 <div className="space-y-4">
                     {/* Pixel size (XY scaling) */}
                     <div className="space-y-3">
@@ -695,7 +696,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
 
             {/* Auto-paint Group (formerly Filaments) */}
             <Card className="p-4 border border-border/50">
-                <div className="space-y-1 mb-4">
+                <div className="space-y-1">
                     <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
                             <h3 className="text-sm font-semibold text-foreground">Auto-paint</h3>
@@ -718,6 +719,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                         Define filament colors and transmission distances for automatic painting
                     </p>
                 </div>
+                <div className="h-px bg-border/50 my-4" />
                 <div className={`space-y-3 transition-opacity duration-200 ${autoPaintEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
                     {filaments.length === 0 ? (
                         <div className="text-center py-4 text-xs text-muted-foreground bg-muted/20 rounded-lg border border-dashed border-border">
