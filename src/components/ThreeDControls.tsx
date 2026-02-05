@@ -111,10 +111,7 @@ const FilamentRow = React.memo(function FilamentRow({
                 <PopoverContent className="w-auto p-3" align="start">
                     <div className="space-y-3">
                         <h4 className="font-medium text-sm">Pick Color</h4>
-                        <HexColorPicker
-                            color={localColor}
-                            onChange={setLocalColor}
-                        />
+                        <HexColorPicker color={localColor} onChange={setLocalColor} />
                         <div className="flex gap-2 items-center">
                             <span className="text-xs text-muted-foreground">Hex</span>
                             <Input
@@ -171,9 +168,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         persisted?.colorSliceHeights?.slice() ?? []
     );
     const [pixelSize, setPixelSize] = useState<number>(persisted?.pixelSize ?? 0.1); // mm per pixel (XY plane)
-    const [filaments, setFilaments] = useState<Filament[]>(
-        persisted?.filaments?.slice() ?? []
-    );
+    const [filaments, setFilaments] = useState<Filament[]>(persisted?.filaments?.slice() ?? []);
     const [autoPaintEnabled, setAutoPaintEnabled] = useState<boolean>(
         persisted?.autoPaintEnabled ?? false
     );
@@ -351,14 +346,9 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         setFilaments((prev) => prev.filter((f) => f.id !== id));
     }, []);
 
-    const updateFilament = useCallback(
-        (id: string, updates: Partial<Omit<Filament, 'id'>>) => {
-            setFilaments((prev) =>
-                prev.map((f) => (f.id === id ? { ...f, ...updates } : f))
-            );
-        },
-        []
-    );
+    const updateFilament = useCallback((id: string, updates: Partial<Omit<Filament, 'id'>>) => {
+        setFilaments((prev) => prev.map((f) => (f.id === id ? { ...f, ...updates } : f)));
+    }, []);
 
     // Stable signature of current settings for cheap change detection
     const currentSignature = useMemo(() => {
@@ -367,7 +357,16 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         const orderSig = colorOrder.join(',');
         const filamentsSig = filaments.map((f) => `${f.id}:${f.color}:${f.td}`).join('|');
         return `${layerHeight}|${slicerFirstLayerHeight}|${pixelSize}|${heightsSig}|${orderSig}|${swSig}|${filamentsSig}|${autoPaintEnabled}`;
-    }, [layerHeight, slicerFirstLayerHeight, pixelSize, colorSliceHeights, colorOrder, filtered, filaments, autoPaintEnabled]);
+    }, [
+        layerHeight,
+        slicerFirstLayerHeight,
+        pixelSize,
+        colorSliceHeights,
+        colorOrder,
+        filtered,
+        filaments,
+        autoPaintEnabled,
+    ]);
 
     const [appliedSignature, setAppliedSignature] = useState<string | null>(null);
 
@@ -705,7 +704,10 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                             </span>
                         </div>
                         <div className="flex items-center gap-2">
-                            <Label htmlFor="auto-paint-toggle" className="text-xs font-medium text-foreground cursor-pointer select-none">
+                            <Label
+                                htmlFor="auto-paint-toggle"
+                                className="text-xs font-medium text-foreground cursor-pointer select-none"
+                            >
                                 Enable
                             </Label>
                             <Switch
@@ -720,7 +722,9 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                     </p>
                 </div>
                 <div className="h-px bg-border/50 my-4" />
-                <div className={`space-y-3 transition-opacity duration-200 ${autoPaintEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                <div
+                    className={`space-y-3 transition-opacity duration-200 ${autoPaintEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}
+                >
                     {filaments.length === 0 ? (
                         <div className="text-center py-4 text-xs text-muted-foreground bg-muted/20 rounded-lg border border-dashed border-border">
                             No filaments added

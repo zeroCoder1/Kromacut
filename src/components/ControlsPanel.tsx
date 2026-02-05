@@ -57,9 +57,7 @@ export const ControlsPanel: React.FC<Props> = ({
         <Card className="p-4 border border-border/50 space-y-4">
             <div>
                 <div>
-                    <h3 className="text-sm font-semibold text-foreground">
-                        Quantization Settings
-                    </h3>
+                    <h3 className="text-sm font-semibold text-foreground">Quantization Settings</h3>
                     <p className="text-xs text-muted-foreground mt-1">
                         Configure palette and reduce colors
                     </p>
