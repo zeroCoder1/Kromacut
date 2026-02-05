@@ -533,8 +533,8 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                         <button
                             type="button"
                             onClick={handleResetHeights}
-                            title="Reset all heights to minimum"
-                            aria-label="Reset all heights"
+                            title="Reset all heights and sort by luminance"
+                            aria-label="Reset all heights and sorting"
                             className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-amber-600 hover:bg-amber-600/15 transition-colors select-none cursor-pointer"
                         >
                             <RotateCcw className="w-4 h-4" />
