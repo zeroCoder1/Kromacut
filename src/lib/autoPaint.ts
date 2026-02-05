@@ -32,6 +32,7 @@ export interface Lab {
 export interface TransitionZone {
     filamentId: string;
     filamentColor: string;
+    filamentTd: number; // Transmission Distance of this filament
     startHeight: number; // mm from Z=0
     endHeight: number; // mm from Z=0
     idealThickness: number; // Uncompressed zone thickness
@@ -298,6 +299,7 @@ export function calculateIdealHeight(
     zones.push({
         filamentId: firstFilament.id,
         filamentColor: firstFilament.color,
+        filamentTd: firstFilament.td,
         startHeight: 0,
         endHeight: foundationThickness,
         idealThickness: foundationThickness,
@@ -321,6 +323,7 @@ export function calculateIdealHeight(
         zones.push({
             filamentId: filament.id,
             filamentColor: filament.color,
+            filamentTd: filament.td,
             startHeight: currentHeight,
             endHeight: currentHeight + transitionThickness,
             idealThickness: transitionThickness,
@@ -530,40 +533,64 @@ export function autoPaintToSliceHeights(
     const colorSliceHeights: number[] = [];
     const colorOrder: number[] = [];
 
-    // Generate layers at each layerHeight increment from 0 to totalHeight
+    const zones = result.transitionZones;
+
+    // Generate layers at each layerHeight increment from 0 to totalHeight.
+    // For each layer, simulate the Beer-Lambert blended color at that Z.
     let currentZ = 0;
     let layerIndex = 0;
+    let prevZoneIndex = 0;
+    let thicknessInCurrentZone = 0;
 
     while (currentZ < result.totalHeight) {
-        // Determine thickness for this layer
         const thickness = layerIndex === 0 ? Math.max(firstLayerHeight, layerHeight) : layerHeight;
 
-        const layerTopZ = currentZ + thickness;
-
-        // Find which filament is active at this Z height (from transition zones)
-        let activeColor = result.layers[0].filamentColor;
-        for (const zone of result.transitionZones) {
-            if (currentZ >= zone.startHeight && currentZ < zone.endHeight) {
-                activeColor = zone.filamentColor;
+        // Find which zone is active at this Z height
+        let activeZoneIndex = 0;
+        for (let zi = 0; zi < zones.length; zi++) {
+            if (currentZ >= zones[zi].startHeight && currentZ < zones[zi].endHeight) {
+                activeZoneIndex = zi;
                 break;
             }
-            if (currentZ >= zone.startHeight) {
-                activeColor = zone.filamentColor;
+            if (currentZ >= zones[zi].startHeight) {
+                activeZoneIndex = zi;
             }
         }
 
-        // Add this layer
-        virtualSwatches.push({
-            hex: activeColor,
-            a: 255,
-        });
+        // Track cumulative thickness within this zone for blending
+        if (activeZoneIndex !== prevZoneIndex) {
+            thicknessInCurrentZone = currentZ - zones[activeZoneIndex].startHeight + thickness;
+            prevZoneIndex = activeZoneIndex;
+        } else {
+            thicknessInCurrentZone += thickness;
+        }
+
+        const zone = zones[activeZoneIndex];
+        const filamentColor = hexToRgb(zone.filamentColor);
+
+        // Simulate the blended color at this layer:
+        // Foundation zone → pure filament color (opaque base)
+        // Subsequent zones → blend filament onto the previous zone's color
+        let blendedColor: RGB;
+        if (activeZoneIndex === 0) {
+            blendedColor = filamentColor;
+        } else {
+            const bgColor = hexToRgb(zones[activeZoneIndex - 1].filamentColor);
+            blendedColor = blendColors(
+                bgColor,
+                filamentColor,
+                zone.filamentTd,
+                thicknessInCurrentZone
+            );
+        }
+
+        virtualSwatches.push({ hex: rgbToHex(blendedColor), a: 255 });
         colorSliceHeights.push(Number(thickness.toFixed(8)));
         colorOrder.push(layerIndex);
 
-        currentZ = layerTopZ;
+        currentZ += thickness;
         layerIndex++;
 
-        // Safety limit
         if (layerIndex > 500) {
             console.warn('autoPaintToSliceHeights: too many layers, stopping at 500');
             break;
