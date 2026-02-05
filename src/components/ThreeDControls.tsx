@@ -1,20 +1,32 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Card } from '@/components/ui/card';
-import { NumberInput } from '@/components/ui/input';
+import { NumberInput, Input } from '@/components/ui/input';
 import ThreeDColorRow from './ThreeDColorRow';
 import { Sortable, SortableContent, SortableOverlay } from '@/components/ui/sortable';
 import { Button } from '@/components/ui/button';
-import { Check, RotateCcw } from 'lucide-react';
+import { Check, RotateCcw, Plus, Trash2 } from 'lucide-react';
+import { HexColorPicker } from 'react-colorful';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 
 type Swatch = { hex: string; a: number };
 
-interface ThreeDControlsStateShape {
+export interface Filament {
+    id: string;
+    color: string;
+    td: number;
+}
+
+export interface ThreeDControlsStateShape {
     layerHeight: number;
     slicerFirstLayerHeight: number;
     colorSliceHeights: number[];
     colorOrder: number[];
     filteredSwatches: Swatch[];
     pixelSize: number; // mm per pixel (XY)
+    filaments: Filament[];
+    autoPaintEnabled: boolean;
 }
 
 interface ThreeDControlsProps {
@@ -27,6 +39,128 @@ interface ThreeDControlsProps {
     persisted?: ThreeDControlsStateShape | null;
 }
 
+// Sub-component for individual filament rows to handle local input state
+const FilamentRow = React.memo(function FilamentRow({
+    filament,
+    onUpdate,
+    onRemove,
+}: {
+    filament: Filament;
+    onUpdate: (id: string, updates: Partial<Omit<Filament, 'id'>>) => void;
+    onRemove: (id: string) => void;
+}) {
+    // Local state for the input value to allow free typing
+    const [localTd, setLocalTd] = useState<string>(filament.td.toString());
+    // Local state for color to allow smooth dragging without frequent parent updates
+    const [localColor, setLocalColor] = useState<string>(filament.color);
+
+    // Sync local TD state if prop changes externally
+    useEffect(() => {
+        setLocalTd(filament.td.toString());
+    }, [filament.td]);
+
+    // Sync local color state if prop changes externally
+    useEffect(() => {
+        setLocalColor(filament.color);
+    }, [filament.color]);
+
+    // Debounced update for color
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            if (localColor !== filament.color) {
+                onUpdate(filament.id, { color: localColor });
+            }
+        }, 200);
+        return () => clearTimeout(timer);
+    }, [localColor, filament.id, filament.color, onUpdate]);
+
+    const handleBlur = () => {
+        let val = parseFloat(localTd);
+        if (isNaN(val)) {
+            // Revert to current prop value if invalid
+            setLocalTd(filament.td.toString());
+            return;
+        }
+        // Clamp value
+        val = Math.min(10, Math.max(0.1, val));
+        // Update parent
+        onUpdate(filament.id, { td: val });
+        // Update local display to clamped value
+        setLocalTd(val.toString());
+    };
+
+    const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === 'Enter') {
+            handleBlur();
+            (e.target as HTMLInputElement).blur();
+        }
+    };
+
+    return (
+        <div className="flex items-center gap-2 p-2 rounded-md border border-border/40 bg-card hover:border-border/80 transition-colors">
+            {/* Color Picker Popover */}
+            <Popover>
+                <PopoverTrigger asChild>
+                    <button
+                        type="button"
+                        className="w-8 h-8 rounded-full border-2 border-border shadow-sm flex-shrink-0 focus:outline-none focus:ring-2 focus:ring-primary/20 transition-transform hover:scale-105 cursor-pointer"
+                        style={{ backgroundColor: localColor }}
+                        title="Change filament color"
+                    />
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-3" align="start">
+                    <div className="space-y-3">
+                        <h4 className="font-medium text-sm">Pick Color</h4>
+                        <HexColorPicker
+                            color={localColor}
+                            onChange={setLocalColor}
+                        />
+                        <div className="flex gap-2 items-center">
+                            <span className="text-xs text-muted-foreground">Hex</span>
+                            <Input
+                                value={localColor}
+                                onChange={(e) => setLocalColor(e.target.value)}
+                                className="h-7 text-xs font-mono"
+                            />
+                        </div>
+                    </div>
+                </PopoverContent>
+            </Popover>
+
+            {/* Transmission Distance Input */}
+            <div className="flex-1 min-w-0">
+                <div className="relative">
+                    <Input
+                        type="number"
+                        min={0.1}
+                        max={10}
+                        step={0.1}
+                        value={localTd}
+                        onChange={(e) => setLocalTd(e.target.value)}
+                        onBlur={handleBlur}
+                        onKeyDown={handleKeyDown}
+                        className="h-8 text-sm pr-8"
+                    />
+                    <div className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">
+                        TD
+                    </div>
+                </div>
+            </div>
+
+            {/* Delete Button */}
+            <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => onRemove(filament.id)}
+                className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer"
+                title="Remove filament"
+            >
+                <Trash2 className="w-4 h-4" />
+            </Button>
+        </div>
+    );
+});
+
 export default function ThreeDControls({ swatches, onChange, persisted }: ThreeDControlsProps) {
     // 3D printing controls (owned by this component)
     const [layerHeight, setLayerHeight] = useState<number>(persisted?.layerHeight ?? 0.12); // mm
@@ -37,6 +171,12 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         persisted?.colorSliceHeights?.slice() ?? []
     );
     const [pixelSize, setPixelSize] = useState<number>(persisted?.pixelSize ?? 0.1); // mm per pixel (XY plane)
+    const [filaments, setFilaments] = useState<Filament[]>(
+        persisted?.filaments?.slice() ?? []
+    );
+    const [autoPaintEnabled, setAutoPaintEnabled] = useState<boolean>(
+        persisted?.autoPaintEnabled ?? false
+    );
 
     // derive non-transparent swatches once per render and memoize
     const filtered = useMemo(() => {
@@ -195,13 +335,39 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         prevOrderRef.current = newColorOrder.slice();
     }, []);
 
+    // Filament handlers
+    const addFilament = useCallback(() => {
+        setFilaments((prev) => [
+            ...prev,
+            {
+                id: Math.random().toString(36).substring(2, 9),
+                color: '#808080',
+                td: 1.0,
+            },
+        ]);
+    }, []);
+
+    const removeFilament = useCallback((id: string) => {
+        setFilaments((prev) => prev.filter((f) => f.id !== id));
+    }, []);
+
+    const updateFilament = useCallback(
+        (id: string, updates: Partial<Omit<Filament, 'id'>>) => {
+            setFilaments((prev) =>
+                prev.map((f) => (f.id === id ? { ...f, ...updates } : f))
+            );
+        },
+        []
+    );
+
     // Stable signature of current settings for cheap change detection
     const currentSignature = useMemo(() => {
         const swSig = filtered.map((s) => `${s.hex}:${s.a}`).join('|');
         const heightsSig = colorSliceHeights.join(',');
         const orderSig = colorOrder.join(',');
-        return `${layerHeight}|${slicerFirstLayerHeight}|${pixelSize}|${heightsSig}|${orderSig}|${swSig}`;
-    }, [layerHeight, slicerFirstLayerHeight, pixelSize, colorSliceHeights, colorOrder, filtered]);
+        const filamentsSig = filaments.map((f) => `${f.id}:${f.color}:${f.td}`).join('|');
+        return `${layerHeight}|${slicerFirstLayerHeight}|${pixelSize}|${heightsSig}|${orderSig}|${swSig}|${filamentsSig}|${autoPaintEnabled}`;
+    }, [layerHeight, slicerFirstLayerHeight, pixelSize, colorSliceHeights, colorOrder, filtered, filaments, autoPaintEnabled]);
 
     const [appliedSignature, setAppliedSignature] = useState<string | null>(null);
 
@@ -215,6 +381,8 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
             colorOrder,
             filteredSwatches: filtered,
             pixelSize,
+            filaments,
+            autoPaintEnabled,
         };
         setAppliedSignature(currentSignature);
         onChange(next);
@@ -226,6 +394,8 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         colorOrder,
         filtered,
         pixelSize,
+        filaments,
+        autoPaintEnabled,
         currentSignature,
     ]);
 
@@ -262,47 +432,50 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         | { type: 'start'; swatch: Swatch }
         | { type: 'swap'; swatch: Swatch; layer: number; height: number };
 
-    // Build cumulative slice heights following the same logic used by the renderer
-    const cumulativeHeights: number[] = [];
-    let run = 0;
-    for (let pos = 0; pos < colorOrder.length; pos++) {
-        const fi = colorOrder[pos];
-        const h = Number(colorSliceHeights[fi] ?? 0) || 0;
-        const eff = pos === 0 ? Math.max(h, slicerFirstLayerHeight || 0) : h;
-        run += eff;
-        cumulativeHeights[pos] = run;
-    }
+    const swapPlan = useMemo(() => {
+        // Build cumulative slice heights following the same logic used by the renderer
+        const cumulativeHeights: number[] = [];
+        let run = 0;
+        for (let pos = 0; pos < colorOrder.length; pos++) {
+            const fi = colorOrder[pos];
+            const h = Number(colorSliceHeights[fi] ?? 0) || 0;
+            const eff = pos === 0 ? Math.max(h, slicerFirstLayerHeight || 0) : h;
+            run += eff;
+            cumulativeHeights[pos] = run;
+        }
 
-    // Build swap plan entries (typed)
-    const swapPlan: SwapEntry[] = [];
-    for (let pos = 0; pos < colorOrder.length; pos++) {
-        const fi = colorOrder[pos];
-        const sw = filtered[fi];
-        if (!sw) continue;
-        if (pos === 0) {
-            swapPlan.push({ type: 'start', swatch: sw });
-            continue;
+        // Build swap plan entries (typed)
+        const plan: SwapEntry[] = [];
+        for (let pos = 0; pos < colorOrder.length; pos++) {
+            const fi = colorOrder[pos];
+            const sw = filtered[fi];
+            if (!sw) continue;
+            if (pos === 0) {
+                plan.push({ type: 'start', swatch: sw });
+                continue;
+            }
+            const prevCum = cumulativeHeights[pos - 1] ?? 0;
+            const heightAt = Math.max(0, prevCum);
+            // Map geometry height to slicer layer index using slicer's first layer height.
+            // We report the layer whose top is at or above this height, matching slicer UI labels.
+            const effFirst = Math.max(0, slicerFirstLayerHeight || 0);
+            let layerNum = 1;
+            let displayHeight = heightAt; // fallback
+            if (layerHeight > 0) {
+                const delta = Math.max(0, heightAt - effFirst);
+                layerNum = 2 + Math.round(delta / layerHeight);
+                // Display height corresponds to the Z height of the layer in slicer
+                displayHeight = effFirst + (layerNum - 1) * layerHeight;
+            }
+            plan.push({
+                type: 'swap',
+                swatch: sw,
+                layer: layerNum,
+                height: displayHeight,
+            });
         }
-        const prevCum = cumulativeHeights[pos - 1] ?? 0;
-        const heightAt = Math.max(0, prevCum);
-        // Map geometry height to slicer layer index using slicer's first layer height.
-        // We report the layer whose top is at or above this height, matching slicer UI labels.
-        const effFirst = Math.max(0, slicerFirstLayerHeight || 0);
-        let layerNum = 1;
-        let displayHeight = heightAt; // fallback
-        if (layerHeight > 0) {
-            const delta = Math.max(0, heightAt - effFirst);
-            layerNum = 2 + Math.round(delta / layerHeight);
-            // Display height corresponds to the Z height of the layer in slicer
-            displayHeight = effFirst + (layerNum - 1) * layerHeight;
-        }
-        swapPlan.push({
-            type: 'swap',
-            swatch: sw,
-            layer: layerNum,
-            height: displayHeight,
-        });
-    }
+        return plan;
+    }, [colorOrder, colorSliceHeights, filtered, layerHeight, slicerFirstLayerHeight]);
 
     // Build a plain-text representation of the instructions for copying
     const buildInstructionsText = () => {
@@ -517,6 +690,60 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                     </div>
 
                     {/* Base slice height removed: first color height represents base thickness */}
+                </div>
+            </Card>
+
+            {/* Auto-paint Group (formerly Filaments) */}
+            <Card className="p-4 border border-border/50">
+                <div className="space-y-1 mb-4">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                            <h3 className="text-sm font-semibold text-foreground">Auto-paint</h3>
+                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20 uppercase tracking-wide">
+                                Experimental
+                            </span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <Label htmlFor="auto-paint-toggle" className="text-xs font-medium text-foreground cursor-pointer select-none">
+                                Enable
+                            </Label>
+                            <Switch
+                                id="auto-paint-toggle"
+                                checked={autoPaintEnabled}
+                                onCheckedChange={setAutoPaintEnabled}
+                            />
+                        </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                        Define filament colors and transmission distances for automatic painting
+                    </p>
+                </div>
+                <div className={`space-y-3 transition-opacity duration-200 ${autoPaintEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                    {filaments.length === 0 ? (
+                        <div className="text-center py-4 text-xs text-muted-foreground bg-muted/20 rounded-lg border border-dashed border-border">
+                            No filaments added
+                        </div>
+                    ) : (
+                        <div className="space-y-2">
+                            {filaments.map((f) => (
+                                <FilamentRow
+                                    key={f.id}
+                                    filament={f}
+                                    onUpdate={updateFilament}
+                                    onRemove={removeFilament}
+                                />
+                            ))}
+                        </div>
+                    )}
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={addFilament}
+                        className="w-full text-xs gap-1.5 h-8 border-dashed border-border hover:border-primary/50 hover:bg-primary/5 text-muted-foreground hover:text-primary cursor-pointer"
+                    >
+                        <Plus className="w-3.5 h-3.5" />
+                        Add Filament
+                    </Button>
                 </div>
             </Card>
 
