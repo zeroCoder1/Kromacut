@@ -191,7 +191,11 @@ export async function exportObjectTo3MFBlob(
         componentIds.push(objectId);
 
         let hex = normalizeHex(overrideHex) || 'FFFFFF';
-        if (!overrideHex && 'color' in mesh.material && (mesh.material as THREE.MeshStandardMaterial).color) {
+        if (
+            !overrideHex &&
+            'color' in mesh.material &&
+            (mesh.material as THREE.MeshStandardMaterial).color
+        ) {
             hex = (mesh.material as THREE.MeshStandardMaterial).color.getHexString().toUpperCase();
         }
         // Use 1-based index for color/extruder
