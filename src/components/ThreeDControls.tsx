@@ -4,11 +4,50 @@ import { NumberInput, Input } from '@/components/ui/input';
 import ThreeDColorRow from './ThreeDColorRow';
 import { Sortable, SortableContent, SortableOverlay } from '@/components/ui/sortable';
 import { Button } from '@/components/ui/button';
-import { Check, RotateCcw, Plus, Trash2 } from 'lucide-react';
+import { Check, RotateCcw, Plus, Trash2, Sparkles, Wand2 } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { generateAutoLayers, autoPaintToSliceHeights, type AutoPaintResult } from '@/lib/autoPaint';
+
+/**
+ * Estimate Transmission Distance (TD) from a hex color.
+ *
+ * TD is related to how much light passes through the filament:
+ * - Darker colors absorb more light → lower TD (0.3-0.8mm)
+ * - Lighter colors are more transparent → higher TD (2-4mm)
+ * - White is most transparent → highest TD (~4mm)
+ * - Black is most opaque → lowest TD (~0.4mm)
+ *
+ * This is an approximation based on luminance with adjustments for saturation.
+ */
+function estimateTDFromColor(hex: string): number {
+    const h = hex.replace(/^#/, '');
+    const r = parseInt(h.slice(0, 2), 16) / 255;
+    const g = parseInt(h.slice(2, 4), 16) / 255;
+    const b = parseInt(h.slice(4, 6), 16) / 255;
+
+    // Calculate luminance (perceived brightness)
+    const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+
+    // Calculate saturation (highly saturated colors tend to be more opaque)
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const saturation = max === 0 ? 0 : (max - min) / max;
+
+    // Base TD from luminance: map 0-1 luminance to 0.4-4.0 TD
+    // Using a curve that gives more range in the middle
+    const baseTD = 0.4 + Math.pow(luminance, 0.7) * 3.6;
+
+    // Saturated colors tend to be slightly more opaque, reduce TD by up to 20%
+    const saturationPenalty = 1 - saturation * 0.2;
+
+    const td = baseTD * saturationPenalty;
+
+    // Clamp to reasonable range and round to 1 decimal
+    return Math.round(Math.max(0.3, Math.min(4.0, td)) * 10) / 10;
+}
 
 type Swatch = { hex: string; a: number };
 
@@ -27,6 +66,9 @@ export interface ThreeDControlsStateShape {
     pixelSize: number; // mm per pixel (XY)
     filaments: Filament[];
     autoPaintEnabled: boolean;
+    // Auto-paint computed state (only used when autoPaintEnabled is true)
+    autoPaintResult?: AutoPaintResult;
+    autoPaintSwatches?: Swatch[];
 }
 
 interface ThreeDControlsProps {
@@ -143,6 +185,21 @@ const FilamentRow = React.memo(function FilamentRow({
                     </div>
                 </div>
             </div>
+
+            {/* Auto-compute TD Button */}
+            <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                    const estimatedTd = estimateTDFromColor(localColor);
+                    setLocalTd(estimatedTd.toString());
+                    onUpdate(filament.id, { td: estimatedTd });
+                }}
+                className="h-8 w-8 text-muted-foreground hover:text-amber-600 hover:bg-amber-600/10 cursor-pointer"
+                title="Auto-estimate TD from color"
+            >
+                <Wand2 className="w-4 h-4" />
+            </Button>
 
             {/* Delete Button */}
             <Button
@@ -370,21 +427,60 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
 
     const [appliedSignature, setAppliedSignature] = useState<string | null>(null);
 
+    // Compute auto-paint result when enabled and filaments are configured
+    const autoPaintResult = useMemo<AutoPaintResult | undefined>(() => {
+        if (!autoPaintEnabled || filaments.length === 0 || filtered.length === 0) {
+            return undefined;
+        }
+        return generateAutoLayers(
+            filaments,
+            filtered.map((s) => ({ hex: s.hex })),
+            layerHeight,
+            slicerFirstLayerHeight
+        );
+    }, [autoPaintEnabled, filaments, filtered, layerHeight, slicerFirstLayerHeight]);
+
+    // Convert auto-paint result to slice heights format
+    const autoPaintSliceData = useMemo(() => {
+        if (!autoPaintResult) return undefined;
+        return autoPaintToSliceHeights(autoPaintResult, layerHeight, slicerFirstLayerHeight);
+    }, [autoPaintResult, layerHeight, slicerFirstLayerHeight]);
+
     // Apply handler - explicitly triggers the rebuild
     const handleApply = useCallback(() => {
         if (!onChange) return;
-        const next: ThreeDControlsStateShape = {
-            layerHeight,
-            slicerFirstLayerHeight,
-            colorSliceHeights,
-            colorOrder,
-            filteredSwatches: filtered,
-            pixelSize,
-            filaments,
-            autoPaintEnabled,
-        };
-        setAppliedSignature(currentSignature);
-        onChange(next);
+
+        // When auto-paint is enabled and we have computed layers, use those
+        if (autoPaintEnabled && autoPaintSliceData && autoPaintResult) {
+            const next: ThreeDControlsStateShape = {
+                layerHeight,
+                slicerFirstLayerHeight,
+                colorSliceHeights: autoPaintSliceData.colorSliceHeights,
+                colorOrder: autoPaintSliceData.colorOrder,
+                filteredSwatches: autoPaintSliceData.virtualSwatches,
+                pixelSize,
+                filaments,
+                autoPaintEnabled,
+                autoPaintResult,
+                autoPaintSwatches: autoPaintSliceData.virtualSwatches,
+            };
+            setAppliedSignature(currentSignature);
+            onChange(next);
+        } else {
+            // Standard mode: use manual color slice heights
+            const next: ThreeDControlsStateShape = {
+                layerHeight,
+                slicerFirstLayerHeight,
+                colorSliceHeights,
+                colorOrder,
+                filteredSwatches: filtered,
+                pixelSize,
+                filaments,
+                autoPaintEnabled,
+            };
+            setAppliedSignature(currentSignature);
+            onChange(next);
+        }
     }, [
         onChange,
         layerHeight,
@@ -395,6 +491,8 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         pixelSize,
         filaments,
         autoPaintEnabled,
+        autoPaintResult,
+        autoPaintSliceData,
         currentSignature,
     ]);
 
@@ -432,7 +530,34 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         | { type: 'swap'; swatch: Swatch; layer: number; height: number };
 
     const swapPlan = useMemo(() => {
-        // Build cumulative slice heights following the same logic used by the renderer
+        // When auto-paint is enabled and we have computed layers, use those
+        if (autoPaintEnabled && autoPaintResult && autoPaintResult.layers.length > 0) {
+            const plan: SwapEntry[] = [];
+            autoPaintResult.layers.forEach((layer, idx) => {
+                const sw: Swatch = { hex: layer.filamentColor, a: 255 };
+                if (idx === 0) {
+                    plan.push({ type: 'start', swatch: sw });
+                } else {
+                    // Calculate layer number at the swap point
+                    const heightAt = layer.startHeight;
+                    const effFirst = Math.max(0, slicerFirstLayerHeight || 0);
+                    let layerNum = 1;
+                    if (layerHeight > 0) {
+                        const delta = Math.max(0, heightAt - effFirst);
+                        layerNum = 2 + Math.round(delta / layerHeight);
+                    }
+                    plan.push({
+                        type: 'swap',
+                        swatch: sw,
+                        layer: layerNum,
+                        height: heightAt,
+                    });
+                }
+            });
+            return plan;
+        }
+
+        // Standard mode: Build cumulative slice heights following the same logic used by the renderer
         const cumulativeHeights: number[] = [];
         let run = 0;
         for (let pos = 0; pos < colorOrder.length; pos++) {
@@ -474,7 +599,15 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
             });
         }
         return plan;
-    }, [colorOrder, colorSliceHeights, filtered, layerHeight, slicerFirstLayerHeight]);
+    }, [
+        colorOrder,
+        colorSliceHeights,
+        filtered,
+        layerHeight,
+        slicerFirstLayerHeight,
+        autoPaintEnabled,
+        autoPaintResult,
+    ]);
 
     // Build a plain-text representation of the instructions for copying
     const buildInstructionsText = () => {
@@ -750,6 +883,70 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                         <Plus className="w-3.5 h-3.5" />
                         Add Filament
                     </Button>
+
+                    {/* Auto-paint computed layers preview */}
+                    {autoPaintEnabled && autoPaintResult && autoPaintResult.layers.length > 0 && (
+                        <>
+                            <div className="h-px bg-border/50 my-4" />
+                            <div className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                    <Sparkles className="w-4 h-4 text-amber-500" />
+                                    <span className="text-xs font-semibold text-foreground">
+                                        Computed Layers
+                                    </span>
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
+                                        {autoPaintResult.layers.length} layers
+                                    </span>
+                                </div>
+                                <div className="text-[10px] text-muted-foreground">
+                                    Total height: {autoPaintResult.totalHeight.toFixed(2)}mm
+                                </div>
+                                <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                                    {autoPaintResult.layers.map((layer, idx) => (
+                                        <div
+                                            key={`${layer.filamentId}-${idx}`}
+                                            className="flex items-center gap-2 p-2 rounded-md bg-muted/30 border border-border/30"
+                                        >
+                                            <span
+                                                className="w-4 h-4 rounded-full border border-border flex-shrink-0"
+                                                style={{ backgroundColor: layer.filamentColor }}
+                                            />
+                                            <div className="flex-1 min-w-0">
+                                                <div className="text-[10px] font-mono text-foreground">
+                                                    {layer.filamentColor}
+                                                </div>
+                                                <div className="text-[9px] text-muted-foreground">
+                                                    {layer.startHeight.toFixed(2)}mm →{' '}
+                                                    {layer.endHeight.toFixed(2)}mm
+                                                    <span className="ml-1 text-primary">
+                                                        (Δ
+                                                        {(
+                                                            layer.endHeight - layer.startHeight
+                                                        ).toFixed(2)}
+                                                        mm)
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </>
+                    )}
+
+                    {/* Warning when auto-paint is enabled but no filaments */}
+                    {autoPaintEnabled && filaments.length === 0 && (
+                        <div className="mt-3 p-2 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-600 text-[10px]">
+                            Add at least one filament to generate auto-paint layers
+                        </div>
+                    )}
+
+                    {/* Warning when auto-paint is enabled but no image colors */}
+                    {autoPaintEnabled && filaments.length > 0 && filtered.length === 0 && (
+                        <div className="mt-3 p-2 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-600 text-[10px]">
+                            Load an image to generate auto-paint layers
+                        </div>
+                    )}
                 </div>
             </Card>
 

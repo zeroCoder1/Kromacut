@@ -16,6 +16,9 @@ interface ThreeDViewProps {
     stepped?: boolean; // if true, flatten each cell to a uniform height (square plateaus instead of spikes)
     pixelColumns?: boolean; // if true, final build uses one plateau per image pixel (rectangular towers)
     rebuildSignal?: number;
+    // Auto-paint mode props
+    autoPaintEnabled?: boolean;
+    autoPaintTotalHeight?: number; // Total model height when auto-paint is enabled
 }
 
 // Convert hex color to RGB tuple
@@ -25,6 +28,11 @@ function hexToRGB(hex: string): [number, number, number] {
     const g = parseInt(h.slice(2, 4), 16) || 0;
     const b = parseInt(h.slice(4, 6), 16) || 0;
     return [r, g, b];
+}
+
+// Calculate perceived luminance (0-1 range)
+function getLuminance(r: number, g: number, b: number): number {
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
 }
 
 // Nearest-color match with small cache to avoid exact equality issues
@@ -67,6 +75,8 @@ export default function ThreeDView({
     stepped = false,
     pixelColumns = true,
     rebuildSignal = 0,
+    autoPaintEnabled = false,
+    autoPaintTotalHeight,
 }: ThreeDViewProps) {
     const mountRef = useRef<HTMLDivElement | null>(null);
     const [isBuilding, setIsBuilding] = useState(false);
@@ -218,7 +228,7 @@ export default function ThreeDView({
                     /* ignore texture assign failure */
                 }
 
-                // Precompute cumulative heights
+                // Precompute cumulative heights (for standard mode)
                 const orderPositions = new Map<number, number>();
                 colorOrder.forEach((fi, pos) => orderPositions.set(fi, pos));
                 const cumulativePerOrderPos: number[] = [];
@@ -229,6 +239,29 @@ export default function ThreeDView({
                     running += eff;
                     cumulativePerOrderPos[pos] = running;
                 });
+
+                // For auto-paint mode, we need to find the luminance range of the image
+                // to map pixel luminance to height
+                let minLum = 1,
+                    maxLum = 0;
+                if (autoPaintEnabled && autoPaintTotalHeight) {
+                    // First pass: find luminance range
+                    for (let py = 0; py < bH; py++) {
+                        for (let px = 0; px < bW; px++) {
+                            const idx = (py * bW + px) * 4;
+                            const a = data[idx + 3];
+                            if (a > 0) {
+                                const lum = getLuminance(data[idx], data[idx + 1], data[idx + 2]);
+                                minLum = Math.min(minLum, lum);
+                                maxLum = Math.max(maxLum, lum);
+                            }
+                        }
+                    }
+                    // Ensure we have a valid range
+                    if (maxLum <= minLum) {
+                        maxLum = minLum + 0.001;
+                    }
+                }
 
                 // Create indexed plane geometry (grid)
                 const indexedPlane = new THREE.PlaneGeometry(1, 1, resolution, resolution);
@@ -250,20 +283,45 @@ export default function ThreeDView({
                     const bcol = data[idx + 2];
                     const a = data[idx + 3];
                     const opaque = a > 0;
-                    let height = opaque ? baseSliceHeight : 0;
-                    if (opaque && swatches.length) {
-                        const swatchIndex = nearestSwatchIndex(r, g, bcol);
-                        if (swatchIndex !== -1) {
-                            const orderPos = orderPositions.get(swatchIndex);
-                            if (orderPos !== undefined)
-                                height += cumulativePerOrderPos[orderPos] || 0;
+
+                    let height = 0;
+
+                    if (opaque) {
+                        if (autoPaintEnabled && autoPaintTotalHeight) {
+                            // Auto-paint mode: map luminance to height
+                            // Darker pixels = lower height, lighter pixels = higher height
+                            const lum = getLuminance(r, g, bcol);
+                            const normalizedLum = (lum - minLum) / (maxLum - minLum);
+                            height = normalizedLum * autoPaintTotalHeight;
+
+                            // Snap to layer height grid
+                            if (layerHeight > 0) {
+                                const delta = Math.max(0, height - slicerFirstLayerHeight);
+                                height =
+                                    slicerFirstLayerHeight +
+                                    Math.round(delta / layerHeight) * layerHeight;
+                                height = Math.max(slicerFirstLayerHeight, height);
+                            }
+                        } else {
+                            // Standard mode: use color-based heights
+                            height = baseSliceHeight;
+                            if (swatches.length) {
+                                const swatchIndex = nearestSwatchIndex(r, g, bcol);
+                                if (swatchIndex !== -1) {
+                                    const orderPos = orderPositions.get(swatchIndex);
+                                    if (orderPos !== undefined)
+                                        height += cumulativePerOrderPos[orderPos] || 0;
+                                }
+                            }
+                            if (layerHeight > 0) {
+                                const delta = Math.max(0, height - slicerFirstLayerHeight);
+                                height =
+                                    slicerFirstLayerHeight +
+                                    Math.round(delta / layerHeight) * layerHeight;
+                            }
                         }
                     }
-                    if (opaque && layerHeight > 0) {
-                        const delta = Math.max(0, height - slicerFirstLayerHeight);
-                        height =
-                            slicerFirstLayerHeight + Math.round(delta / layerHeight) * layerHeight;
-                    }
+
                     idxPos.setZ(vi, height);
 
                     if (performance.now() - lastYield > YIELD_EVERY_MS) {
@@ -286,7 +344,7 @@ export default function ThreeDView({
                 // Clear model group and add new mesh
                 modelGroup.clear();
                 // Dispose old materials if they were separate (preview uses shared materialRef)
-                
+
                 const mesh = new THREE.Mesh(finalGeom, materialRef.current || undefined);
                 const finalW = bbox ? bbox.boxW : w;
                 const finalH = bbox ? bbox.boxH : h;
@@ -297,7 +355,9 @@ export default function ThreeDView({
                     (
                         window as unknown as { __KROMACUT_LAST_MESH?: THREE.Object3D }
                     ).__KROMACUT_LAST_MESH = modelGroup;
-                } catch { /* ignore */ }
+                } catch {
+                    /* ignore */
+                }
 
                 // Calculate maximum height (depth) of the model
                 const box = new THREE.Box3().setFromObject(modelGroup);
@@ -320,7 +380,7 @@ export default function ThreeDView({
                 const fullW = img.naturalWidth;
                 const fullH = img.naturalHeight;
                 const { minX, minY, boxW, boxH } = bbox;
-                
+
                 // Safety guard for enormous images
                 if (boxW * boxH > 1_200_000) {
                     console.warn('[3D] pixelColumns fallback to adaptive (image too large)');
@@ -335,110 +395,252 @@ export default function ThreeDView({
                 ctx.drawImage(img, 0, 0, fullW, fullH);
                 const { data } = ctx.getImageData(0, 0, fullW, fullH);
 
-                // Prepare layers
-                const cumulativeHeights: number[] = [];
-                let running = 0;
-                colorOrder.forEach((fi, pos) => {
-                    const h = colorSliceHeights[fi] || 0;
-                    const eff = pos === 0 ? Math.max(h, slicerFirstLayerHeight) : h;
-                    running += eff;
-                    cumulativeHeights[pos] = running;
-                });
-
                 // Clear current model
                 modelGroup.clear();
 
                 const YIELD_MS = 12;
                 let lastYield = performance.now();
 
-                // Iterate each color layer and build a mesh
-                for (let i = 0; i < colorOrder.length; i++) {
-                    if (token !== buildTokenRef.current) return;
-                    
-                    const swatchIdx = colorOrder[i];
-                    if (!swatches[swatchIdx]) continue;
-                    const colorHex = swatches[swatchIdx].hex;
-                    const thickness = (i === 0 ? Math.max(colorSliceHeights[swatchIdx] || 0, slicerFirstLayerHeight) : (colorSliceHeights[swatchIdx] || 0));
-                    if (thickness <= 0.0001) continue; // Skip empty layers
-                    
-                    const baseZ = (i === 0 ? 0 : cumulativeHeights[i - 1]);
-                    
-                    // Identify active pixels for this layer
-                    // Pixel is active if its color index maps to a layer >= i
-                    const activePixels = new Uint8Array(boxW * boxH);
-                    let activeCount = 0;
+                if (autoPaintEnabled && autoPaintTotalHeight && autoPaintTotalHeight > 0) {
+                    // === AUTO-PAINT MODE ===
+                    // Build layers based on luminance ranges
 
-                    for (let y = 0; y < boxH; y++) {
-                        for (let x = 0; x < boxW; x++) {
-                            const px = minX + x;
-                            const py = minY + y;
+                    // First, find the luminance range of the image
+                    let minLum = 1,
+                        maxLum = 0;
+                    for (let py = minY; py < minY + boxH; py++) {
+                        for (let px = minX; px < minX + boxW; px++) {
                             const idx = (py * fullW + px) * 4;
-                            const r = data[idx];
-                            const g = data[idx + 1];
-                            const b = data[idx + 2];
                             const a = data[idx + 3];
-                            
                             if (a > 0) {
-                                const sIdx = nearestSwatchIndex(r, g, b);
-                                if (sIdx !== -1) {
-                                    // Find which layer this swatch belongs to
-                                    // We need to know if the swatch's layer position >= i
-                                    // swatches are mapped to order by colorOrder array
-                                    // colorOrder[pos] = sIdx
-                                    // so we find pos where colorOrder[pos] == sIdx
-                                    const layerPos = colorOrder.indexOf(sIdx);
-                                    if (layerPos >= i) {
-                                        // Flip Y axis: Image Y (0=top) -> Grid Y (0=bottom)
-                                        // We want Image Top (0) to be at Grid High Y (boxH-1) => 3D High Y
-                                        // So map y -> boxH - 1 - y
+                                const lum = getLuminance(data[idx], data[idx + 1], data[idx + 2]);
+                                minLum = Math.min(minLum, lum);
+                                maxLum = Math.max(maxLum, lum);
+                            }
+                        }
+                    }
+                    if (maxLum <= minLum) maxLum = minLum + 0.001;
+
+                    // Build layers from the colorSliceHeights (which are now the auto-paint layers)
+                    // Each layer has a color (from swatches) and a cumulative height
+                    const cumulativeHeights: number[] = [];
+                    let running = 0;
+                    colorOrder.forEach((fi, pos) => {
+                        const h = colorSliceHeights[fi] || 0;
+                        const eff = pos === 0 ? Math.max(h, slicerFirstLayerHeight) : h;
+                        running += eff;
+                        cumulativeHeights[pos] = running;
+                    });
+
+                    // For each layer, find pixels whose target height falls within this layer
+                    for (let i = 0; i < colorOrder.length; i++) {
+                        if (token !== buildTokenRef.current) return;
+
+                        const swatchIdx = colorOrder[i];
+                        if (!swatches[swatchIdx]) continue;
+                        const colorHex = swatches[swatchIdx].hex;
+                        const thickness =
+                            i === 0
+                                ? Math.max(
+                                      colorSliceHeights[swatchIdx] || 0,
+                                      slicerFirstLayerHeight
+                                  )
+                                : colorSliceHeights[swatchIdx] || 0;
+                        if (thickness <= 0.0001) continue;
+
+                        const baseZ = i === 0 ? 0 : cumulativeHeights[i - 1];
+                        const topZ = cumulativeHeights[i];
+
+                        // Identify active pixels for this layer
+                        // A pixel is active if its luminance-based height falls within [baseZ, topZ]
+                        const activePixels = new Uint8Array(boxW * boxH);
+                        let activeCount = 0;
+
+                        for (let y = 0; y < boxH; y++) {
+                            for (let x = 0; x < boxW; x++) {
+                                const px = minX + x;
+                                const py = minY + y;
+                                const idx = (py * fullW + px) * 4;
+                                const a = data[idx + 3];
+
+                                if (a > 0) {
+                                    const lum = getLuminance(
+                                        data[idx],
+                                        data[idx + 1],
+                                        data[idx + 2]
+                                    );
+                                    const normalizedLum = (lum - minLum) / (maxLum - minLum);
+                                    let pixelHeight = normalizedLum * autoPaintTotalHeight;
+
+                                    // Snap to layer height grid
+                                    if (layerHeight > 0) {
+                                        const delta = Math.max(
+                                            0,
+                                            pixelHeight - slicerFirstLayerHeight
+                                        );
+                                        pixelHeight =
+                                            slicerFirstLayerHeight +
+                                            Math.round(delta / layerHeight) * layerHeight;
+                                        pixelHeight = Math.max(slicerFirstLayerHeight, pixelHeight);
+                                    }
+
+                                    // Include this pixel if its height is >= topZ of this layer
+                                    // (meaning it extends through this layer)
+                                    if (pixelHeight >= topZ - 0.001) {
                                         activePixels[(boxH - 1 - y) * boxW + x] = 1;
                                         activeCount++;
                                     }
                                 }
                             }
+
+                            if (performance.now() - lastYield > YIELD_MS) {
+                                await new Promise((r) => requestAnimationFrame(r));
+                                if (token !== buildTokenRef.current) return;
+                                lastYield = performance.now();
+                            }
                         }
-                         if (performance.now() - lastYield > YIELD_MS) {
+
+                        if (activeCount === 0) continue;
+
+                        // Generate mesh for this layer
+                        const { positions, indices } = generateGreedyMesh(
+                            activePixels,
+                            boxW,
+                            boxH,
+                            thickness,
+                            baseZ,
+                            pixelSize,
+                            heightScale
+                        );
+
+                        const geom = new THREE.BufferGeometry();
+                        geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                        geom.setIndex(indices);
+                        geom.computeVertexNormals();
+
+                        const mat = new THREE.MeshStandardMaterial({
+                            color: colorHex,
+                            roughness: 0.5,
+                            metalness: 0.1,
+                            side: THREE.DoubleSide,
+                        });
+
+                        const mesh = new THREE.Mesh(geom, mat);
+                        modelGroup.add(mesh);
+
+                        if (performance.now() - lastYield > YIELD_MS) {
                             await new Promise((r) => requestAnimationFrame(r));
                             if (token !== buildTokenRef.current) return;
                             lastYield = performance.now();
                         }
                     }
-
-                    if (activeCount === 0) continue;
-
-                    // Generate Optimized Greedy Mesh
-                    const { positions, indices } = generateGreedyMesh(
-                        activePixels,
-                        boxW,
-                        boxH,
-                        thickness,
-                        baseZ,
-                        pixelSize,
-                        heightScale
-                    );
-
-                    const geom = new THREE.BufferGeometry();
-                    geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-                    geom.setIndex(indices);
-                    geom.computeVertexNormals();
-                    
-                    const mat = new THREE.MeshStandardMaterial({
-                        color: colorHex,
-                        roughness: 0.5,
-                        metalness: 0.1,
-                        side: THREE.DoubleSide 
+                } else {
+                    // === STANDARD MODE ===
+                    // Prepare layers
+                    const cumulativeHeights: number[] = [];
+                    let running = 0;
+                    colorOrder.forEach((fi, pos) => {
+                        const h = colorSliceHeights[fi] || 0;
+                        const eff = pos === 0 ? Math.max(h, slicerFirstLayerHeight) : h;
+                        running += eff;
+                        cumulativeHeights[pos] = running;
                     });
-                    
-                    // Note: generateGreedyMesh returns world-space coordinates (scaled by pixelSize/heightScale)
-                    // so we do not need to apply scale/position to the mesh itself.
-                    const mesh = new THREE.Mesh(geom, mat);
-                    
-                    modelGroup.add(mesh);
-                    
-                    if (performance.now() - lastYield > YIELD_MS) {
-                        await new Promise((r) => requestAnimationFrame(r));
+
+                    // Iterate each color layer and build a mesh
+                    for (let i = 0; i < colorOrder.length; i++) {
                         if (token !== buildTokenRef.current) return;
-                        lastYield = performance.now();
+
+                        const swatchIdx = colorOrder[i];
+                        if (!swatches[swatchIdx]) continue;
+                        const colorHex = swatches[swatchIdx].hex;
+                        const thickness =
+                            i === 0
+                                ? Math.max(
+                                      colorSliceHeights[swatchIdx] || 0,
+                                      slicerFirstLayerHeight
+                                  )
+                                : colorSliceHeights[swatchIdx] || 0;
+                        if (thickness <= 0.0001) continue; // Skip empty layers
+
+                        const baseZ = i === 0 ? 0 : cumulativeHeights[i - 1];
+
+                        // Identify active pixels for this layer
+                        // Pixel is active if its color index maps to a layer >= i
+                        const activePixels = new Uint8Array(boxW * boxH);
+                        let activeCount = 0;
+
+                        for (let y = 0; y < boxH; y++) {
+                            for (let x = 0; x < boxW; x++) {
+                                const px = minX + x;
+                                const py = minY + y;
+                                const idx = (py * fullW + px) * 4;
+                                const r = data[idx];
+                                const g = data[idx + 1];
+                                const b = data[idx + 2];
+                                const a = data[idx + 3];
+
+                                if (a > 0) {
+                                    const sIdx = nearestSwatchIndex(r, g, b);
+                                    if (sIdx !== -1) {
+                                        // Find which layer this swatch belongs to
+                                        // We need to know if the swatch's layer position >= i
+                                        // swatches are mapped to order by colorOrder array
+                                        // colorOrder[pos] = sIdx
+                                        // so we find pos where colorOrder[pos] == sIdx
+                                        const layerPos = colorOrder.indexOf(sIdx);
+                                        if (layerPos >= i) {
+                                            // Flip Y axis: Image Y (0=top) -> Grid Y (0=bottom)
+                                            // We want Image Top (0) to be at Grid High Y (boxH-1) => 3D High Y
+                                            // So map y -> boxH - 1 - y
+                                            activePixels[(boxH - 1 - y) * boxW + x] = 1;
+                                            activeCount++;
+                                        }
+                                    }
+                                }
+                            }
+                            if (performance.now() - lastYield > YIELD_MS) {
+                                await new Promise((r) => requestAnimationFrame(r));
+                                if (token !== buildTokenRef.current) return;
+                                lastYield = performance.now();
+                            }
+                        }
+
+                        if (activeCount === 0) continue;
+
+                        // Generate Optimized Greedy Mesh
+                        const { positions, indices } = generateGreedyMesh(
+                            activePixels,
+                            boxW,
+                            boxH,
+                            thickness,
+                            baseZ,
+                            pixelSize,
+                            heightScale
+                        );
+
+                        const geom = new THREE.BufferGeometry();
+                        geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                        geom.setIndex(indices);
+                        geom.computeVertexNormals();
+
+                        const mat = new THREE.MeshStandardMaterial({
+                            color: colorHex,
+                            roughness: 0.5,
+                            metalness: 0.1,
+                            side: THREE.DoubleSide,
+                        });
+
+                        // Note: generateGreedyMesh returns world-space coordinates (scaled by pixelSize/heightScale)
+                        // so we do not need to apply scale/position to the mesh itself.
+                        const mesh = new THREE.Mesh(geom, mat);
+
+                        modelGroup.add(mesh);
+
+                        if (performance.now() - lastYield > YIELD_MS) {
+                            await new Promise((r) => requestAnimationFrame(r));
+                            if (token !== buildTokenRef.current) return;
+                            lastYield = performance.now();
+                        }
                     }
                 }
 
@@ -448,7 +650,9 @@ export default function ThreeDView({
                     (
                         window as unknown as { __KROMACUT_LAST_MESH?: THREE.Object3D }
                     ).__KROMACUT_LAST_MESH = modelGroup;
-                } catch { /* ignore */ }
+                } catch {
+                    /* ignore */
+                }
 
                 // Calculate dimensions
                 const box = new THREE.Box3().setFromObject(modelGroup);
@@ -460,7 +664,7 @@ export default function ThreeDView({
                     height: finalH * pixelSize,
                     depth: maxDepth,
                 });
-                
+
                 // Auto-frame
                 try {
                     const camera = cameraRef.current;
@@ -468,11 +672,13 @@ export default function ThreeDView({
                     if (camera && controls) {
                         const sphere = new THREE.Sphere();
                         box.getBoundingSphere(sphere);
-                         // ... same framing logic ...
+                        // ... same framing logic ...
                         const fov = (camera.fov * Math.PI) / 180;
                         const distance = sphere.radius / Math.sin(fov / 2);
                         const dir = new THREE.Vector3(0.9, 0.8, 1).normalize();
-                        const camPos = sphere.center.clone().add(dir.multiplyScalar(distance * 1.35));
+                        const camPos = sphere.center
+                            .clone()
+                            .add(dir.multiplyScalar(distance * 1.35));
                         camera.position.copy(camPos);
                         controls.target.copy(sphere.center);
                         camera.near = Math.max(0.01, sphere.radius * 0.01);
@@ -480,7 +686,9 @@ export default function ThreeDView({
                         camera.updateProjectionMatrix();
                         controls.update();
                     }
-                } catch { /* ignore */ }
+                } catch {
+                    /* ignore */
+                }
             };
 
             (async () => {
@@ -512,22 +720,25 @@ export default function ThreeDView({
                     }
                 }
                 if (maxX < minX || maxY < minY) {
-                    minX = 0; minY = 0; maxX = w - 1; maxY = h - 1;
+                    minX = 0;
+                    minY = 0;
+                    maxX = w - 1;
+                    maxY = h - 1;
                 }
                 const boxW = maxX - minX + 1;
                 const boxH = maxY - minY + 1;
                 const fullRes = chooseResolution(boxW, boxH);
                 const previewRes = Math.max(32, Math.round(fullRes / 3));
                 const bbox = { minX, minY, boxW, boxH };
-                
+
                 // Always use preview build first
                 await buildGeometry(img, previewRes, 'preview', bbox);
-                
+
                 if (token !== buildTokenRef.current) {
                     setIsBuilding(false);
                     return;
                 }
-                
+
                 // Schedule final build
                 await new Promise<void>((res) =>
                     requestIdle(async () => {
@@ -560,6 +771,8 @@ export default function ThreeDView({
         stepped,
         pixelColumns,
         rebuildSignal,
+        autoPaintEnabled,
+        autoPaintTotalHeight,
         cameraRef,
         controlsRef,
         materialRef,

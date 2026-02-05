@@ -159,7 +159,9 @@ function App(): React.ReactElement | null {
                 prev.filteredSwatches === s.filteredSwatches &&
                 prev.pixelSize === s.pixelSize &&
                 prev.filaments === s.filaments &&
-                prev.autoPaintEnabled === s.autoPaintEnabled
+                prev.autoPaintEnabled === s.autoPaintEnabled &&
+                prev.autoPaintResult === s.autoPaintResult &&
+                prev.autoPaintSwatches === s.autoPaintSwatches
             ) {
                 return prev; // no change; avoid triggering rerender cascade
             }
@@ -299,6 +301,8 @@ function App(): React.ReactElement | null {
                                     swatches={threeDState.filteredSwatches}
                                     pixelSize={threeDState.pixelSize}
                                     rebuildSignal={threeDBuildSignal}
+                                    autoPaintEnabled={threeDState.autoPaintEnabled}
+                                    autoPaintTotalHeight={threeDState.autoPaintResult?.totalHeight}
                                 />
                             )}
                             <PreviewActions
