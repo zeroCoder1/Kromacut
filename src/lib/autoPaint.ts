@@ -52,6 +52,7 @@ export interface AutoPaintResult {
     layers: AutoPaintLayer[];
     totalHeight: number;
     idealHeight: number; // What height would be ideal without compression
+    autoHeight: number; // The default height when user hasn't set a max
     compressionRatio: number; // 1.0 = no compression, 0.5 = 50% compressed
     filamentOrder: string[]; // Filament IDs in order (dark to light)
     transitionZones: TransitionZone[]; // Detailed zone info
@@ -413,6 +414,7 @@ export function generateAutoLayers(
             layers: [],
             totalHeight: 0,
             idealHeight: 0,
+            autoHeight: 0,
             compressionRatio: 1,
             filamentOrder: [],
             transitionZones: [],
@@ -424,6 +426,7 @@ export function generateAutoLayers(
             layers: [],
             totalHeight: 0,
             idealHeight: 0,
+            autoHeight: 0,
             compressionRatio: 1,
             filamentOrder: [],
             transitionZones: [],
@@ -450,7 +453,8 @@ export function generateAutoLayers(
     // When user hasn't set a max height, default to a practical value.
     // Most lithophane prints are 2-4mm tall. We default to 3mm.
     const DEFAULT_MAX_HEIGHT = 3.0;
-    const targetMaxHeight = maxHeight ?? Math.min(idealHeight, DEFAULT_MAX_HEIGHT);
+    const autoHeight = Math.min(idealHeight, DEFAULT_MAX_HEIGHT);
+    const targetMaxHeight = maxHeight ?? autoHeight;
     const { compressedZones, compressionRatio } = compressZones(zones, targetMaxHeight);
 
     // --- STEP 5: GENERATE LAYER SEGMENTS FROM ZONES ---
@@ -468,6 +472,7 @@ export function generateAutoLayers(
         layers,
         totalHeight,
         idealHeight,
+        autoHeight,
         compressionRatio,
         filamentOrder,
         transitionZones: compressedZones,

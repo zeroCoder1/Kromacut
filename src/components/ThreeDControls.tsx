@@ -921,7 +921,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                                     max={20}
                                     step={0.1}
                                     value={autoPaintMaxHeight ?? ''}
-                                    placeholder={autoPaintResult?.idealHeight?.toFixed(1) ?? 'Auto'}
+                                    placeholder={autoPaintResult?.totalHeight?.toFixed(1) ?? 'Auto'}
                                     onChange={(e) => {
                                         const v = e.target.value;
                                         if (v === '' || v === undefined) {
@@ -947,23 +947,22 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                                     size="sm"
                                     onClick={() => setAutoPaintMaxHeight(undefined)}
                                     className="h-8 px-2 text-xs text-muted-foreground hover:text-foreground"
-                                    title="Use ideal height (no compression)"
+                                    title="Use automatic height"
                                 >
                                     Auto
                                 </Button>
                             </div>
                             {autoPaintResult && (
                                 <div className="text-[10px] text-muted-foreground">
-                                    Ideal height: {autoPaintResult.idealHeight.toFixed(2)}mm
+                                    Height: {autoPaintResult.totalHeight.toFixed(2)}mm
+                                    {autoPaintMaxHeight === undefined && (
+                                        <span className="ml-1 text-primary">(auto)</span>
+                                    )}
                                     {autoPaintMaxHeight !== undefined &&
-                                        autoPaintResult.compressionRatio < 1 && (
+                                        autoPaintMaxHeight < autoPaintResult.autoHeight && (
                                             <span className="ml-2 text-amber-600">
-                                                ⚠️{' '}
-                                                {(
-                                                    (1 - autoPaintResult.compressionRatio) *
-                                                    100
-                                                ).toFixed(0)}
-                                                % compressed
+                                                ⚠️ compressed below auto (
+                                                {autoPaintResult.autoHeight.toFixed(1)}mm)
                                             </span>
                                         )}
                                 </div>
@@ -1002,8 +1001,11 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                                         {autoPaintResult.transitionZones.map(
                                             (zone: TransitionZone, idx: number) => {
                                                 const isCompressed =
+                                                    autoPaintMaxHeight !== undefined &&
+                                                    autoPaintMaxHeight <
+                                                        autoPaintResult.autoHeight &&
                                                     zone.actualThickness <
-                                                    zone.idealThickness - 0.01;
+                                                        zone.idealThickness - 0.01;
                                                 return (
                                                     <div
                                                         key={`zone-${idx}`}
