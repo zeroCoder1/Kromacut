@@ -20,10 +20,9 @@ import {
  * Estimate Transmission Distance (TD) from a hex color.
  *
  * TD is related to how much light passes through the filament:
- * - Darker colors absorb more light → lower TD (0.3-0.8mm)
- * - Lighter colors are more transparent → higher TD (2-4mm)
- * - White is most transparent → highest TD (~10mm)
- * - Black is most opaque → lowest TD (~0.4mm)
+ * - Darker colors absorb more light → lower TD (≈0.5mm)
+ * - Lighter colors are more transparent → higher TD (≈6.0mm)
+ * - Saturated colors can be slightly clearer than gray of same luminance
  *
  * This is an approximation based on luminance with adjustments for saturation.
  */
@@ -36,22 +35,21 @@ function estimateTDFromColor(hex: string): number {
     // Calculate luminance (perceived brightness)
     const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
-    // Calculate saturation (highly saturated colors tend to be more opaque)
+    // Calculate saturation (highly saturated colors tend to be clearer)
     const max = Math.max(r, g, b);
     const min = Math.min(r, g, b);
     const saturation = max === 0 ? 0 : (max - min) / max;
 
-    // Base TD from luminance: map 0-1 luminance to 0.4-10.0 TD
-    // Using a curve that gives more range in the middle
-    const baseTD = 0.4 + Math.pow(luminance, 0.7) * 9.6;
+    // Base TD from luminance: map 0-1 luminance to 0.5-6.0 TD (linear)
+    let estimatedTD = 0.5 + luminance * 5.5;
 
-    // Saturated colors tend to be slightly more opaque, reduce TD by up to 10%
-    const saturationPenalty = 1 - saturation * 0.1;
-
-    const td = baseTD * saturationPenalty;
+    // Saturated colors can be clearer than gray of same luminance
+    if (luminance < 0.9) {
+        estimatedTD += saturation * 1.5;
+    }
 
     // Clamp to reasonable range and round to 1 decimal
-    return Math.round(Math.max(0.3, Math.min(10.0, td)) * 10) / 10;
+    return Math.round(Math.max(0.4, Math.min(7.5, estimatedTD)) * 10) / 10;
 }
 
 type Swatch = { hex: string; a: number };
