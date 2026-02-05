@@ -388,7 +388,10 @@ export default function ThreeDView({
                                     // so we find pos where colorOrder[pos] == sIdx
                                     const layerPos = colorOrder.indexOf(sIdx);
                                     if (layerPos >= i) {
-                                        activePixels[y * boxW + x] = 1;
+                                        // Flip Y axis: Image Y (0=top) -> Grid Y (0=bottom)
+                                        // We want Image Top (0) to be at Grid High Y (boxH-1) => 3D High Y
+                                        // So map y -> boxH - 1 - y
+                                        activePixels[(boxH - 1 - y) * boxW + x] = 1;
                                         activeCount++;
                                     }
                                 }
