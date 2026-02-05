@@ -130,44 +130,42 @@ function App(): React.ReactElement | null {
     const layoutRef = useRef<HTMLDivElement | null>(null);
 
     const dropzone = useDropzone({ enabled: mode === '2d', onFile: handleFiles });
-    const { onExportImage, onExportStl, onExport3MF, onSwatchApply, onSwatchDelete } = useAppHandlers({
-        canvasPreviewRef,
-        imageSrc,
-        invalidate,
-        setImage,
-        setExportingSTL,
-        setExportProgress,
-        exportingSTL,
-        exportObjectToStlBlob,
-        exportObjectTo3MFBlob: (obj) =>
-            exportObjectTo3MFBlob(obj, {
-                layerHeight: threeDState.layerHeight,
-                firstLayerHeight: threeDState.slicerFirstLayerHeight,
-            }),
-        applyQuantize,
-        swatches,
-    });
+    const { onExportImage, onExportStl, onExport3MF, onSwatchApply, onSwatchDelete } =
+        useAppHandlers({
+            canvasPreviewRef,
+            imageSrc,
+            invalidate,
+            setImage,
+            setExportingSTL,
+            setExportProgress,
+            exportingSTL,
+            exportObjectToStlBlob,
+            exportObjectTo3MFBlob: (obj) =>
+                exportObjectTo3MFBlob(obj, {
+                    layerHeight: threeDState.layerHeight,
+                    firstLayerHeight: threeDState.slicerFirstLayerHeight,
+                }),
+            applyQuantize,
+            swatches,
+        });
     // Stable handler to avoid recreating function each render and to prevent redundant state sets
-    const handleThreeDStateChange = useCallback(
-        (s: ThreeDControlsStateShape) => {
-            setThreeDState((prev) => {
-                if (
-                    prev.layerHeight === s.layerHeight &&
-                    prev.slicerFirstLayerHeight === s.slicerFirstLayerHeight &&
-                    prev.colorSliceHeights === s.colorSliceHeights &&
-                    prev.colorOrder === s.colorOrder &&
-                    prev.filteredSwatches === s.filteredSwatches &&
-                    prev.pixelSize === s.pixelSize &&
-                    prev.filaments === s.filaments &&
-                    prev.autoPaintEnabled === s.autoPaintEnabled
-                ) {
-                    return prev; // no change; avoid triggering rerender cascade
-                }
-                return s;
-            });
-        },
-        []
-    );
+    const handleThreeDStateChange = useCallback((s: ThreeDControlsStateShape) => {
+        setThreeDState((prev) => {
+            if (
+                prev.layerHeight === s.layerHeight &&
+                prev.slicerFirstLayerHeight === s.slicerFirstLayerHeight &&
+                prev.colorSliceHeights === s.colorSliceHeights &&
+                prev.colorOrder === s.colorOrder &&
+                prev.filteredSwatches === s.filteredSwatches &&
+                prev.pixelSize === s.pixelSize &&
+                prev.filaments === s.filaments &&
+                prev.autoPaintEnabled === s.autoPaintEnabled
+            ) {
+                return prev; // no change; avoid triggering rerender cascade
+            }
+            return s;
+        });
+    }, []);
 
     return (
         <div className="box-border text-inherit font-sans flex flex-col flex-1 min-w-0 max-w-full min-h-0 h-screen w-full">
