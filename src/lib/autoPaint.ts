@@ -368,10 +368,8 @@ export function autoPaintToSliceHeights(
 
     while (currentZ < result.totalHeight) {
         // Determine thickness for this layer
-        const thickness = layerIndex === 0 
-            ? Math.max(firstLayerHeight, layerHeight)
-            : layerHeight;
-        
+        const thickness = layerIndex === 0 ? Math.max(firstLayerHeight, layerHeight) : layerHeight;
+
         const layerTopZ = currentZ + thickness;
 
         // Find which filament is active at this Z height
