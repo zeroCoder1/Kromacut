@@ -784,11 +784,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                 </div>
                 <div className="h-px bg-border/50 mb-4" />
                 <div
-                    className={
-                        autoPaintEnabled
-                            ? 'pointer-events-none select-none'
-                            : undefined
-                    }
+                    className={autoPaintEnabled ? 'pointer-events-none select-none' : undefined}
                     aria-disabled={autoPaintEnabled}
                 >
                     <Sortable
