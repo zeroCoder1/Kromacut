@@ -4,7 +4,7 @@ import { NumberInput } from '@/components/ui/input';
 import ThreeDColorRow from './ThreeDColorRow';
 import { Sortable, SortableContent, SortableOverlay } from '@/components/ui/sortable';
 import { Button } from '@/components/ui/button';
-import { Check } from 'lucide-react';
+import { Check, RotateCcw } from 'lucide-react';
 
 type Swatch = { hex: string; a: number };
 
@@ -143,6 +143,10 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
 
     // stable per-row change handler so memoized rows don't re-render due to
     // a new function identity being created each parent render
+    const displayOrder = useMemo(() => {
+        return colorOrder.length === filtered.length ? colorOrder : filtered.map((_, i) => i);
+    }, [colorOrder, filtered]);
+
     const onRowChange = useCallback((idx: number, v: number) => {
         setColorSliceHeights((prev) => {
             const next = prev.slice();
@@ -150,6 +154,19 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
             return next;
         });
     }, []);
+
+    const handleResetHeights = useCallback(() => {
+        if (displayOrder.length === 0) return;
+        const next = [...colorSliceHeights];
+        displayOrder.forEach((fi, idx) => {
+            if (idx === 0) {
+                next[fi] = Math.max(layerHeight, slicerFirstLayerHeight);
+            } else {
+                next[fi] = layerHeight;
+            }
+        });
+        setColorSliceHeights(next);
+    }, [displayOrder, colorSliceHeights, layerHeight, slicerFirstLayerHeight]);
 
     // Handle sortable reordering
     const handleColorOrderChange = useCallback((newOrder: string[]) => {
@@ -341,10 +358,6 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         }
     };
 
-    // Get the current display order for the sortable
-    const displayOrder =
-        colorOrder.length === filtered.length ? colorOrder : filtered.map((_, i) => i);
-
     // Ensure the currently-first color in display order cannot be below the slicer first layer height
     // AND all colors stay aligned with valid layer boundaries.
     useEffect(() => {
@@ -496,9 +509,20 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                             Drag to reorder, adjust sliders to customize
                         </p>
                     </div>
-                    <span className="px-2 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold">
-                        {filtered.length} colors
-                    </span>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={handleResetHeights}
+                            title="Reset all heights to minimum"
+                            aria-label="Reset all heights"
+                            className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-amber-600 hover:bg-amber-600/15 transition-colors select-none cursor-pointer"
+                        >
+                            <RotateCcw className="w-4 h-4" />
+                        </button>
+                        <span className="px-2 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold">
+                            {filtered.length} colors
+                        </span>
+                    </div>
                 </div>
                 <div className="h-px bg-border/50 mb-4" />
                 <Sortable
