@@ -754,12 +754,16 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
             </Card>
 
             {/* Per-color slice heights with Sortable */}
-            <Card className="p-4 border border-border/50">
+            <Card
+                className={`p-4 border border-border/50 transition-opacity duration-200 ${autoPaintEnabled ? 'opacity-50' : 'opacity-100'}`}
+            >
                 <div className="flex justify-between items-center mb-4">
                     <div>
                         <h4 className="font-semibold text-foreground">Color Slice Heights</h4>
                         <p className="text-xs text-muted-foreground mt-1">
-                            Drag to reorder, adjust sliders to customize
+                            {autoPaintEnabled
+                                ? 'Disabled while Auto-paint is enabled'
+                                : 'Drag to reorder, adjust sliders to customize'}
                         </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -768,7 +772,8 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                             onClick={handleResetHeights}
                             title="Reset all heights and sort by luminance"
                             aria-label="Reset all heights and sorting"
-                            className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-amber-600 hover:bg-amber-600/15 transition-colors select-none cursor-pointer"
+                            className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-amber-600 hover:bg-amber-600/15 transition-colors select-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                            disabled={autoPaintEnabled}
                         >
                             <RotateCcw className="w-4 h-4" />
                         </button>
@@ -778,38 +783,47 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                     </div>
                 </div>
                 <div className="h-px bg-border/50 mb-4" />
-                <Sortable
-                    value={displayOrder.map(String)}
-                    onValueChange={handleColorOrderChange}
-                    orientation="vertical"
+                <div
+                    className={
+                        autoPaintEnabled
+                            ? 'pointer-events-none select-none'
+                            : undefined
+                    }
+                    aria-disabled={autoPaintEnabled}
                 >
-                    <SortableContent asChild>
-                        <div className="space-y-2">
-                            {displayOrder.map((fi, idx) => {
-                                const s = filtered[fi];
-                                const val = colorSliceHeights[fi] ?? layerHeight;
-                                const isFirst = idx === 0;
-                                const minForRow = isFirst
-                                    ? Math.max(layerHeight, slicerFirstLayerHeight)
-                                    : layerHeight;
-                                return (
-                                    <ThreeDColorRow
-                                        key={`${s.hex}-${fi}`}
-                                        fi={fi}
-                                        hex={s.hex}
-                                        value={val}
-                                        layerHeight={layerHeight}
-                                        minHeight={minForRow}
-                                        onChange={onRowChange}
-                                    />
-                                );
-                            })}
-                        </div>
-                    </SortableContent>
-                    <SortableOverlay>
-                        <div className="rounded-lg bg-primary/10 h-11" />
-                    </SortableOverlay>
-                </Sortable>
+                    <Sortable
+                        value={displayOrder.map(String)}
+                        onValueChange={handleColorOrderChange}
+                        orientation="vertical"
+                    >
+                        <SortableContent asChild>
+                            <div className="space-y-2">
+                                {displayOrder.map((fi, idx) => {
+                                    const s = filtered[fi];
+                                    const val = colorSliceHeights[fi] ?? layerHeight;
+                                    const isFirst = idx === 0;
+                                    const minForRow = isFirst
+                                        ? Math.max(layerHeight, slicerFirstLayerHeight)
+                                        : layerHeight;
+                                    return (
+                                        <ThreeDColorRow
+                                            key={`${s.hex}-${fi}`}
+                                            fi={fi}
+                                            hex={s.hex}
+                                            value={val}
+                                            layerHeight={layerHeight}
+                                            minHeight={minForRow}
+                                            onChange={onRowChange}
+                                        />
+                                    );
+                                })}
+                            </div>
+                        </SortableContent>
+                        <SortableOverlay>
+                            <div className="rounded-lg bg-primary/10 h-11" />
+                        </SortableOverlay>
+                    </Sortable>
+                </div>
             </Card>
 
             {/* 3D printing instruction group (dynamic) */}
