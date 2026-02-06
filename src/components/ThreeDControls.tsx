@@ -270,7 +270,6 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
     const [profiles, setProfiles] = useState<AutoPaintProfile[]>(() => loadProfiles());
     const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
     const [showSaveNewPopover, setShowSaveNewPopover] = useState(false);
-    const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
     const [saveProfileName, setSaveProfileName] = useState('');
     const [importFeedback, setImportFeedback] = useState<string | null>(null);
     const importInputRef = useRef<HTMLInputElement>(null);
@@ -307,7 +306,6 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         const updated = overwriteProfile(profiles, activeProfileId, filaments);
         setProfiles(updated);
         saveProfilesToStorage(updated);
-        setShowOverwriteConfirm(false);
     }, [activeProfileId, filaments, profiles]);
 
     const handleLoadProfile = useCallback(
@@ -1095,49 +1093,16 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                         </Select>
 
                         {/* Save (overwrite active profile) */}
-                        <Popover
-                            open={showOverwriteConfirm}
-                            onOpenChange={setShowOverwriteConfirm}
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-primary cursor-pointer flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                            title="Save changes to current profile"
+                            disabled={!activeProfileId || !isDirty}
+                            onClick={handleOverwriteProfile}
                         >
-                            <PopoverTrigger asChild>
-                                <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-8 w-8 text-muted-foreground hover:text-primary cursor-pointer flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
-                                    title="Save changes to current profile"
-                                    disabled={!activeProfileId || !isDirty}
-                                >
-                                    <Save className="w-4 h-4" />
-                                </Button>
-                            </PopoverTrigger>
-                            <PopoverContent className="w-64 p-3" align="end">
-                                <div className="space-y-2">
-                                    <h4 className="text-xs font-semibold">Overwrite Profile</h4>
-                                    <p className="text-[11px] text-muted-foreground">
-                                        Save current filaments over &quot;
-                                        {profiles.find((p) => p.id === activeProfileId)?.name}
-                                        &quot;?
-                                    </p>
-                                    <div className="flex gap-2">
-                                        <Button
-                                            size="sm"
-                                            variant="outline"
-                                            onClick={() => setShowOverwriteConfirm(false)}
-                                            className="flex-1 h-7 text-xs cursor-pointer"
-                                        >
-                                            Cancel
-                                        </Button>
-                                        <Button
-                                            size="sm"
-                                            onClick={handleOverwriteProfile}
-                                            className="flex-1 h-7 text-xs cursor-pointer"
-                                        >
-                                            Overwrite
-                                        </Button>
-                                    </div>
-                                </div>
-                            </PopoverContent>
-                        </Popover>
+                            <Save className="w-4 h-4" />
+                        </Button>
 
                         {/* Save New */}
                         <Popover open={showSaveNewPopover} onOpenChange={setShowSaveNewPopover}>
