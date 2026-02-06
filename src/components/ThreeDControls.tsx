@@ -666,26 +666,6 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         setFilaments((prev) => prev.map((f) => (f.id === id ? { ...f, ...updates } : f)));
     }, []);
 
-    // Stable signature of current settings for cheap change detection
-    const currentSignature = useMemo(() => {
-        const swSig = filtered.map((s) => `${s.hex}:${s.a}`).join('|');
-        const heightsSig = colorSliceHeights.join(',');
-        const orderSig = colorOrder.join(',');
-        const filamentsSig = filaments.map((f) => `${f.id}:${f.color}:${f.td}`).join('|');
-        return `${layerHeight}|${slicerFirstLayerHeight}|${pixelSize}|${heightsSig}|${orderSig}|${swSig}|${filamentsSig}|${paintMode}|${autoPaintMaxHeight ?? 'auto'}`;
-    }, [
-        layerHeight,
-        slicerFirstLayerHeight,
-        pixelSize,
-        colorSliceHeights,
-        colorOrder,
-        filtered,
-        filaments,
-        paintMode,
-        autoPaintMaxHeight,
-    ]);
-
-    const [appliedSignature, setAppliedSignature] = useState<string | null>(null);
 
     // Compute auto-paint result when enabled and filaments are configured
     const autoPaintResult = useMemo<AutoPaintResult | undefined>(() => {
@@ -713,7 +693,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
 
         // When auto-paint is active and we have computed layers, use those
         if (paintMode === 'autopaint' && autoPaintSliceData && autoPaintResult) {
-            const next: ThreeDControlsStateShape = {
+            onChange({
                 layerHeight,
                 slicerFirstLayerHeight,
                 colorSliceHeights: autoPaintSliceData.colorSliceHeights,
@@ -725,12 +705,10 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                 autoPaintResult,
                 autoPaintSwatches: autoPaintSliceData.virtualSwatches,
                 autoPaintFilamentSwatches: autoPaintSliceData.filamentSwatches,
-            };
-            setAppliedSignature(currentSignature);
-            onChange(next);
+            });
         } else {
             // Standard mode: use manual color slice heights
-            const next: ThreeDControlsStateShape = {
+            onChange({
                 layerHeight,
                 slicerFirstLayerHeight,
                 colorSliceHeights,
@@ -739,9 +717,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                 pixelSize,
                 filaments,
                 paintMode,
-            };
-            setAppliedSignature(currentSignature);
-            onChange(next);
+            });
         }
     }, [
         onChange,
@@ -755,14 +731,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         paintMode,
         autoPaintResult,
         autoPaintSliceData,
-        currentSignature,
     ]);
-
-    // Pending changes flag based on signature comparison
-    const hasPendingChanges = useMemo(() => {
-        if (appliedSignature === null) return true; // before first apply, always enable
-        return appliedSignature !== currentSignature;
-    }, [appliedSignature, currentSignature]);
 
     // No auto-apply on mount — the user must click "Apply Changes" to build the 3D model.
 
@@ -970,17 +939,10 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
             <div className="flex justify-end">
                 <Button
                     onClick={handleApply}
-                    disabled={!hasPendingChanges}
-                    className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold disabled:bg-green-600/50 disabled:cursor-not-allowed transition-all duration-200 shadow-md hover:shadow-lg active:scale-95 gap-1.5"
+                    className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold transition-all duration-200 shadow-md hover:shadow-lg active:scale-95 gap-1.5"
                 >
                     <Check className="w-4 h-4" />
-                    <span>
-                        {appliedSignature === null
-                            ? 'Build 3D Model'
-                            : hasPendingChanges
-                              ? 'Apply Changes'
-                              : 'No Changes'}
-                    </span>
+                    <span>Build 3D Model</span>
                 </Button>
             </div>
 
