@@ -141,18 +141,6 @@ export default function ThreeDView({
             // mark that a build is in progress for the overlay
             setIsBuilding(true);
 
-            const chooseResolution = (w: number, h: number) => {
-                const maxDim = Math.max(w, h);
-                if (maxDim > 3000) return 512;
-                if (maxDim > 2000) return 384;
-                if (maxDim > 1600) return 320;
-                if (maxDim > 1200) return 256;
-                if (maxDim > 900) return 192;
-                if (maxDim > 600) return 160;
-                if (maxDim > 400) return 128;
-                return 96;
-            };
-
             const requestIdle = (fn: () => void) => {
                 const ric = (
                     window as unknown as {
@@ -173,210 +161,9 @@ export default function ThreeDView({
                     i.src = imageSrc;
                 });
 
-            const buildGeometry = async (
-                img: HTMLImageElement,
-                resolution: number,
-                _mode: 'preview' | 'final',
-                bbox?: {
-                    minX: number;
-                    minY: number;
-                    boxW: number;
-                    boxH: number;
-                }
-            ) => {
-                const nearestSwatchIndex = buildNearestSwatchFinder(swatches);
-                if (token !== buildTokenRef.current) return; // superseded
-                const w = img.naturalWidth;
-                const h = img.naturalHeight;
-                if (!w || !h) return;
-
-                // Prepare a cropped canvas of the opaque bounding box for consistent sampling
-                const canvas = document.createElement('canvas');
-                const bMinX = bbox ? bbox.minX : 0;
-                const bMinY = bbox ? bbox.minY : 0;
-                const bW = bbox ? bbox.boxW : w;
-                const bH = bbox ? bbox.boxH : h;
-                canvas.width = bW;
-                canvas.height = bH;
-                const ctx = canvas.getContext('2d');
-                if (!ctx) return;
-                ctx.drawImage(img, bMinX, bMinY, bW, bH, 0, 0, bW, bH);
-                const { data } = ctx.getImageData(0, 0, bW, bH);
-
-                // For preview mode, we stick to the single-mesh terrain approach for performance
-                // Create a canvas-based texture for crisp sampling
-                try {
-                    const tex = new THREE.CanvasTexture(canvas);
-                    tex.magFilter = THREE.NearestFilter;
-                    tex.minFilter = THREE.NearestFilter;
-                    tex.generateMipmaps = false;
-                    tex.wrapS = THREE.ClampToEdgeWrapping;
-                    tex.wrapT = THREE.ClampToEdgeWrapping;
-                    tex.colorSpace = THREE.SRGBColorSpace;
-                    tex.repeat.set(1, 1);
-                    tex.offset.set(0, 0);
-                    tex.needsUpdate = true;
-                    const mat = materialRef.current;
-                    if (mat) {
-                        mat.map = tex;
-                        mat.alphaMap = tex;
-                        mat.vertexColors = false;
-                        mat.flatShading = true;
-                        mat.needsUpdate = true;
-                    }
-                } catch {
-                    /* ignore texture assign failure */
-                }
-
-                // Precompute cumulative heights (for standard mode)
-                const orderPositions = new Map<number, number>();
-                colorOrder.forEach((fi, pos) => orderPositions.set(fi, pos));
-                const cumulativePerOrderPos: number[] = [];
-                let running = 0;
-                colorOrder.forEach((fi, pos) => {
-                    const h = colorSliceHeights[fi] || 0;
-                    const eff = pos === 0 ? Math.max(h, slicerFirstLayerHeight) : h;
-                    running += eff;
-                    cumulativePerOrderPos[pos] = running;
-                });
-
-                // For auto-paint mode, we need to find the luminance range of the image
-                // to map pixel luminance to height
-                let minLum = 1,
-                    maxLum = 0;
-                if (autoPaintEnabled && autoPaintTotalHeight) {
-                    // First pass: find luminance range
-                    for (let py = 0; py < bH; py++) {
-                        for (let px = 0; px < bW; px++) {
-                            const idx = (py * bW + px) * 4;
-                            const a = data[idx + 3];
-                            if (a > 0) {
-                                const lum = getLuminance(data[idx], data[idx + 1], data[idx + 2]);
-                                minLum = Math.min(minLum, lum);
-                                maxLum = Math.max(maxLum, lum);
-                            }
-                        }
-                    }
-                    // Ensure we have a valid range
-                    if (maxLum <= minLum) {
-                        maxLum = minLum + 0.001;
-                    }
-                }
-
-                // Create indexed plane geometry (grid)
-                const indexedPlane = new THREE.PlaneGeometry(1, 1, resolution, resolution);
-                const idxPos = indexedPlane.getAttribute('position');
-                const indexedVertexCount = idxPos.count;
-                const uvIdx = indexedPlane.getAttribute('uv') as THREE.BufferAttribute | null;
-                const YIELD_EVERY_MS = 12;
-                let lastYield = performance.now();
-
-                // Compute heights on the indexed grid vertices
-                for (let vi = 0; vi < indexedVertexCount; vi++) {
-                    const u = uvIdx ? uvIdx.getX(vi) : idxPos.getX(vi) + 0.5;
-                    const v = uvIdx ? uvIdx.getY(vi) : idxPos.getY(vi) + 0.5;
-                    const px = Math.min(bW - 1, Math.max(0, Math.round(u * (bW - 1))));
-                    const py = Math.min(bH - 1, Math.max(0, Math.round((1 - v) * (bH - 1))));
-                    const idx = (py * bW + px) * 4;
-                    const r = data[idx];
-                    const g = data[idx + 1];
-                    const bcol = data[idx + 2];
-                    const a = data[idx + 3];
-                    const opaque = a > 0;
-
-                    let height = 0;
-
-                    if (opaque) {
-                        if (autoPaintEnabled && autoPaintTotalHeight) {
-                            // Auto-paint mode: map luminance to height
-                            // Darker pixels = base layer height, lighter pixels = full height
-                            const lum = getLuminance(r, g, bcol);
-                            const normalizedLum = (lum - minLum) / (maxLum - minLum);
-
-                            // Ensure darkest pixels still have at least the first layer
-                            const firstLayerH = Math.max(slicerFirstLayerHeight, layerHeight);
-                            height =
-                                firstLayerH + normalizedLum * (autoPaintTotalHeight - firstLayerH);
-
-                            // Snap to layer height grid
-                            if (layerHeight > 0) {
-                                const delta = Math.max(0, height - slicerFirstLayerHeight);
-                                height =
-                                    slicerFirstLayerHeight +
-                                    Math.round(delta / layerHeight) * layerHeight;
-                                height = Math.max(slicerFirstLayerHeight, height);
-                            }
-                        } else {
-                            // Standard mode: use color-based heights
-                            height = baseSliceHeight;
-                            if (swatches.length) {
-                                const swatchIndex = nearestSwatchIndex(r, g, bcol);
-                                if (swatchIndex !== -1) {
-                                    const orderPos = orderPositions.get(swatchIndex);
-                                    if (orderPos !== undefined)
-                                        height += cumulativePerOrderPos[orderPos] || 0;
-                                }
-                            }
-                            if (layerHeight > 0) {
-                                const delta = Math.max(0, height - slicerFirstLayerHeight);
-                                height =
-                                    slicerFirstLayerHeight +
-                                    Math.round(delta / layerHeight) * layerHeight;
-                            }
-                        }
-                    }
-
-                    idxPos.setZ(vi, height);
-
-                    if (performance.now() - lastYield > YIELD_EVERY_MS) {
-                        await new Promise((r) => requestAnimationFrame(r));
-                        if (token !== buildTokenRef.current) return;
-                        lastYield = performance.now();
-                    }
-                }
-
-                if (token !== buildTokenRef.current) {
-                    indexedPlane.dispose();
-                    return;
-                }
-
-                // For preview, we just use the non-indexed terrain
-                const finalGeom = indexedPlane.toNonIndexed();
-                finalGeom.computeVertexNormals();
-                indexedPlane.dispose();
-
-                // Clear model group and add new mesh
-                modelGroup.clear();
-                // Dispose old materials if they were separate (preview uses shared materialRef)
-
-                const mesh = new THREE.Mesh(finalGeom, materialRef.current || undefined);
-                const finalW = bbox ? bbox.boxW : w;
-                const finalH = bbox ? bbox.boxH : h;
-                mesh.scale.set(finalW * pixelSize, finalH * pixelSize, heightScale);
-                modelGroup.add(mesh);
-
-                try {
-                    (
-                        window as unknown as { __KROMACUT_LAST_MESH?: THREE.Object3D }
-                    ).__KROMACUT_LAST_MESH = modelGroup;
-                } catch {
-                    /* ignore */
-                }
-
-                // Calculate maximum height (depth) of the model
-                const box = new THREE.Box3().setFromObject(modelGroup);
-                const maxDepth = box.max.z - box.min.z;
-                setModelDimensions({
-                    width: finalW * pixelSize,
-                    height: finalH * pixelSize,
-                    depth: maxDepth,
-                });
-            };
-
             // Build multi-mesh geometry (one object per color layer)
             const buildPixelGeometry = async (
                 img: HTMLImageElement,
-                mode: 'preview' | 'final',
                 bbox: { minX: number; minY: number; boxW: number; boxH: number }
             ) => {
                 const nearestSwatchIndex = buildNearestSwatchFinder(swatches);
@@ -384,12 +171,6 @@ export default function ThreeDView({
                 const fullW = img.naturalWidth;
                 const fullH = img.naturalHeight;
                 const { minX, minY, boxW, boxH } = bbox;
-
-                // Safety guard for enormous images
-                if (boxW * boxH > 1_200_000) {
-                    console.warn('[3D] pixelColumns fallback to adaptive (image too large)');
-                    return buildGeometry(img, chooseResolution(boxW, boxH), mode, bbox);
-                }
 
                 const canvas = document.createElement('canvas');
                 canvas.width = fullW;
@@ -743,12 +524,7 @@ export default function ThreeDView({
                 }
                 const boxW = maxX - minX + 1;
                 const boxH = maxY - minY + 1;
-                const fullRes = chooseResolution(boxW, boxH);
-                const previewRes = Math.max(32, Math.round(fullRes / 3));
                 const bbox = { minX, minY, boxW, boxH };
-
-                // Always use preview build first
-                await buildGeometry(img, previewRes, 'preview', bbox);
 
                 if (token !== buildTokenRef.current) {
                     setIsBuilding(false);
@@ -762,8 +538,7 @@ export default function ThreeDView({
                             res();
                             return;
                         }
-                        if (pixelColumns) await buildPixelGeometry(img, 'final', bbox);
-                        else await buildGeometry(img, fullRes, 'final', bbox);
+                        if (pixelColumns) await buildPixelGeometry(img, bbox);
                         res();
                     })
                 );
