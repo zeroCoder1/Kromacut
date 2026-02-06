@@ -760,31 +760,11 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
 
     // Pending changes flag based on signature comparison
     const hasPendingChanges = useMemo(() => {
-        if (appliedSignature === null) return false; // before first apply, keep disabled
+        if (appliedSignature === null) return true; // before first apply, always enable
         return appliedSignature !== currentSignature;
     }, [appliedSignature, currentSignature]);
 
-    // Track if we've done initial auto-apply
-    const isFirstMount = useRef(true);
-
-    // Auto-apply on mount when switching to 3D mode
-    // Wait for swatches to be loaded and color heights to be initialized
-    useEffect(() => {
-        if (
-            persisted &&
-            isFirstMount.current &&
-            filtered.length > 0 &&
-            colorSliceHeights.length > 0
-        ) {
-            // Apply after a delay to ensure all initialization effects have run
-            const timer = setTimeout(() => {
-                isFirstMount.current = false;
-                handleApply();
-            }, 200);
-            return () => clearTimeout(timer);
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [persisted, filtered.length, colorSliceHeights.length]);
+    // No auto-apply on mount — the user must click "Apply Changes" to build the 3D model.
 
     // Prepare dynamic 3D print instruction data derived from current control state
     type SwapEntry =
@@ -994,7 +974,13 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                     className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold disabled:bg-green-600/50 disabled:cursor-not-allowed transition-all duration-200 shadow-md hover:shadow-lg active:scale-95 gap-1.5"
                 >
                     <Check className="w-4 h-4" />
-                    <span>{hasPendingChanges ? 'Apply Changes' : 'No Changes'}</span>
+                    <span>
+                        {appliedSignature === null
+                            ? 'Build 3D Model'
+                            : hasPendingChanges
+                              ? 'Apply Changes'
+                              : 'No Changes'}
+                    </span>
                 </Button>
             </div>
 
