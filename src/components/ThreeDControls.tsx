@@ -25,8 +25,7 @@ import {
 } from '@/components/ui/select';
 import { HexColorPicker } from 'react-colorful';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
     generateAutoLayers,
     autoPaintToSliceHeights,
@@ -100,8 +99,8 @@ export interface ThreeDControlsStateShape {
     filteredSwatches: Swatch[];
     pixelSize: number; // mm per pixel (XY)
     filaments: Filament[];
-    autoPaintEnabled: boolean;
-    // Auto-paint computed state (only used when autoPaintEnabled is true)
+    paintMode: 'manual' | 'autopaint';
+    // Auto-paint computed state (only used when paintMode is 'autopaint')
     autoPaintResult?: AutoPaintResult;
     autoPaintSwatches?: Swatch[];
     autoPaintFilamentSwatches?: Swatch[];
@@ -278,8 +277,8 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
     );
     const [pixelSize, setPixelSize] = useState<number>(persisted?.pixelSize ?? 0.1); // mm per pixel (XY plane)
     const [filaments, setFilaments] = useState<Filament[]>(initialState.initialFilaments);
-    const [autoPaintEnabled, setAutoPaintEnabled] = useState<boolean>(
-        persisted?.autoPaintEnabled ?? false
+    const [paintMode, setPaintMode] = useState<'manual' | 'autopaint'>(
+        persisted?.paintMode ?? 'manual'
     );
     // Max height constraint for auto-paint (undefined = use ideal/automatic height)
     const [autoPaintMaxHeight, setAutoPaintMaxHeight] = useState<number | undefined>(undefined);
@@ -605,7 +604,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         const heightsSig = colorSliceHeights.join(',');
         const orderSig = colorOrder.join(',');
         const filamentsSig = filaments.map((f) => `${f.id}:${f.color}:${f.td}`).join('|');
-        return `${layerHeight}|${slicerFirstLayerHeight}|${pixelSize}|${heightsSig}|${orderSig}|${swSig}|${filamentsSig}|${autoPaintEnabled}|${autoPaintMaxHeight ?? 'auto'}`;
+        return `${layerHeight}|${slicerFirstLayerHeight}|${pixelSize}|${heightsSig}|${orderSig}|${swSig}|${filamentsSig}|${paintMode}|${autoPaintMaxHeight ?? 'auto'}`;
     }, [
         layerHeight,
         slicerFirstLayerHeight,
@@ -614,7 +613,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         colorOrder,
         filtered,
         filaments,
-        autoPaintEnabled,
+        paintMode,
         autoPaintMaxHeight,
     ]);
 
@@ -622,7 +621,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
 
     // Compute auto-paint result when enabled and filaments are configured
     const autoPaintResult = useMemo<AutoPaintResult | undefined>(() => {
-        if (!autoPaintEnabled || filaments.length === 0 || filtered.length === 0) {
+        if (paintMode !== 'autopaint' || filaments.length === 0 || filtered.length === 0) {
             return undefined;
         }
         return generateAutoLayers(
@@ -633,7 +632,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
             autoPaintMaxHeight // Pass max height constraint
         );
     }, [
-        autoPaintEnabled,
+        paintMode,
         filaments,
         filtered,
         layerHeight,
@@ -651,8 +650,8 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
     const handleApply = useCallback(() => {
         if (!onChange) return;
 
-        // When auto-paint is enabled and we have computed layers, use those
-        if (autoPaintEnabled && autoPaintSliceData && autoPaintResult) {
+        // When auto-paint is active and we have computed layers, use those
+        if (paintMode === 'autopaint' && autoPaintSliceData && autoPaintResult) {
             const next: ThreeDControlsStateShape = {
                 layerHeight,
                 slicerFirstLayerHeight,
@@ -661,7 +660,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                 filteredSwatches: autoPaintSliceData.virtualSwatches,
                 pixelSize,
                 filaments,
-                autoPaintEnabled,
+                paintMode,
                 autoPaintResult,
                 autoPaintSwatches: autoPaintSliceData.virtualSwatches,
                 autoPaintFilamentSwatches: autoPaintSliceData.filamentSwatches,
@@ -678,7 +677,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                 filteredSwatches: filtered,
                 pixelSize,
                 filaments,
-                autoPaintEnabled,
+                paintMode,
             };
             setAppliedSignature(currentSignature);
             onChange(next);
@@ -692,7 +691,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         filtered,
         pixelSize,
         filaments,
-        autoPaintEnabled,
+        paintMode,
         autoPaintResult,
         autoPaintSliceData,
         currentSignature,
@@ -732,8 +731,8 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         | { type: 'swap'; swatch: Swatch; layer: number; height: number };
 
     const swapPlan = useMemo(() => {
-        // When auto-paint is enabled and we have computed layers, use those
-        if (autoPaintEnabled && autoPaintResult && autoPaintResult.layers.length > 0) {
+        // When auto-paint is active and we have computed layers, use those
+        if (paintMode === 'autopaint' && autoPaintResult && autoPaintResult.layers.length > 0) {
             const plan: SwapEntry[] = [];
             autoPaintResult.layers.forEach(
                 (
@@ -812,7 +811,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         filtered,
         layerHeight,
         slicerFirstLayerHeight,
-        autoPaintEnabled,
+        paintMode,
         autoPaintResult,
     ]);
 
@@ -1033,40 +1032,41 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                 </div>
             </Card>
 
-            {/* Auto-paint Group (formerly Filaments) */}
-            <Card className="p-4 border border-border/50">
-                <div className="space-y-1">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                            <h3 className="text-sm font-semibold text-foreground">Auto-paint</h3>
-                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20 uppercase tracking-wide">
-                                Experimental
-                            </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <Label
-                                htmlFor="auto-paint-toggle"
-                                className="text-xs font-medium text-foreground cursor-pointer select-none"
-                            >
-                                Enable
-                            </Label>
-                            <Switch
-                                id="auto-paint-toggle"
-                                checked={autoPaintEnabled}
-                                onCheckedChange={setAutoPaintEnabled}
-                            />
-                        </div>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                        Define filament colors and transmission distances for automatic painting
-                    </p>
-                </div>
-                <div className="h-px bg-border/50 my-4" />
+            {/* Paint Mode Tabs */}
+            <Tabs
+                value={paintMode}
+                onValueChange={(v) => setPaintMode(v as 'manual' | 'autopaint')}
+            >
+                <TabsList className="w-full">
+                    <TabsTrigger value="manual" className="flex-1">
+                        Manual
+                    </TabsTrigger>
+                    <TabsTrigger value="autopaint" className="flex-1">
+                        Auto-paint
+                    </TabsTrigger>
+                </TabsList>
 
-                {/* Profiles Section */}
-                <div
-                    className={`space-y-2 mb-4 transition-opacity duration-200 ${autoPaintEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}
-                >
+                {/* Auto-paint Tab */}
+                <TabsContent value="autopaint">
+                    <Card className="p-4 border border-border/50">
+                        <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                                <h3 className="text-sm font-semibold text-foreground">
+                                    Auto-paint
+                                </h3>
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20 uppercase tracking-wide">
+                                    Experimental
+                                </span>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                                Define filament colors and transmission distances for automatic
+                                painting
+                            </p>
+                        </div>
+                        <div className="h-px bg-border/50 my-4" />
+
+                        {/* Profiles Section */}
+                        <div className="space-y-2 mb-4">
                     <div className="flex items-center gap-2">
                         <span className="text-xs font-semibold text-foreground">Profiles</span>
                         {activeProfileId && isDirty && (
@@ -1219,9 +1219,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                     )}
                 </div>
 
-                <div
-                    className={`space-y-3 transition-opacity duration-200 ${autoPaintEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}
-                >
+                        <div className="space-y-3">
                     {filaments.length === 0 ? (
                         <div className="text-center py-4 text-xs text-muted-foreground bg-muted/20 rounded-lg border border-dashed border-border">
                             No filaments added
@@ -1315,8 +1313,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                     )}
 
                     {/* Auto-paint transition zones preview */}
-                    {autoPaintEnabled &&
-                        autoPaintResult &&
+                    {autoPaintResult &&
                         autoPaintResult.transitionZones.length > 0 && (
                             <>
                                 <div className="h-px bg-border/50 my-4" />
@@ -1406,90 +1403,86 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                             </>
                         )}
 
-                    {/* Warning when auto-paint is enabled but no filaments */}
-                    {autoPaintEnabled && filaments.length === 0 && (
+                    {/* Warning when no filaments */}
+                    {filaments.length === 0 && (
                         <div className="mt-3 p-2 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-600 text-[10px]">
                             Add at least one filament to generate auto-paint layers
                         </div>
                     )}
 
-                    {/* Warning when auto-paint is enabled but no image colors */}
-                    {autoPaintEnabled && filaments.length > 0 && filtered.length === 0 && (
+                    {/* Warning when no image colors */}
+                    {filaments.length > 0 && filtered.length === 0 && (
                         <div className="mt-3 p-2 rounded-md bg-amber-500/10 border border-amber-500/20 text-amber-600 text-[10px]">
                             Load an image to generate auto-paint layers
                         </div>
                     )}
-                </div>
-            </Card>
+                        </div>
+                    </Card>
+                </TabsContent>
 
-            {/* Per-color slice heights with Sortable */}
-            <Card
-                className={`p-4 border border-border/50 transition-opacity duration-200 ${autoPaintEnabled ? 'opacity-50' : 'opacity-100'}`}
-            >
-                <div className="flex justify-between items-center mb-4">
-                    <div>
-                        <h4 className="font-semibold text-foreground">Color Slice Heights</h4>
-                        <p className="text-xs text-muted-foreground mt-1">
-                            {autoPaintEnabled
-                                ? 'Disabled while Auto-paint is enabled'
-                                : 'Drag to reorder, adjust sliders to customize'}
-                        </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                        <button
-                            type="button"
-                            onClick={handleResetHeights}
-                            title="Reset all heights and sort by luminance"
-                            aria-label="Reset all heights and sorting"
-                            className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-amber-600 hover:bg-amber-600/15 transition-colors select-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                            disabled={autoPaintEnabled}
-                        >
-                            <RotateCcw className="w-4 h-4" />
-                        </button>
-                        <span className="px-2 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold">
-                            {filtered.length} colors
-                        </span>
-                    </div>
-                </div>
-                <div className="h-px bg-border/50 mb-4" />
-                <div
-                    className={autoPaintEnabled ? 'pointer-events-none select-none' : undefined}
-                    aria-disabled={autoPaintEnabled}
-                >
-                    <Sortable
-                        value={displayOrder.map(String)}
-                        onValueChange={handleColorOrderChange}
-                        orientation="vertical"
-                    >
-                        <SortableContent asChild>
-                            <div className="space-y-2">
-                                {displayOrder.map((fi, idx) => {
-                                    const s = filtered[fi];
-                                    const val = colorSliceHeights[fi] ?? layerHeight;
-                                    const isFirst = idx === 0;
-                                    const minForRow = isFirst
-                                        ? Math.max(layerHeight, slicerFirstLayerHeight)
-                                        : layerHeight;
-                                    return (
-                                        <ThreeDColorRow
-                                            key={`${s.hex}-${fi}`}
-                                            fi={fi}
-                                            hex={s.hex}
-                                            value={val}
-                                            layerHeight={layerHeight}
-                                            minHeight={minForRow}
-                                            onChange={onRowChange}
-                                        />
-                                    );
-                                })}
+                {/* Manual Tab */}
+                <TabsContent value="manual">
+                    <Card className="p-4 border border-border/50">
+                        <div className="flex justify-between items-center mb-4">
+                            <div>
+                                <h4 className="font-semibold text-foreground">
+                                    Color Slice Heights
+                                </h4>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    Drag to reorder, adjust sliders to customize
+                                </p>
                             </div>
-                        </SortableContent>
-                        <SortableOverlay>
-                            <div className="rounded-lg bg-primary/10 h-11" />
-                        </SortableOverlay>
-                    </Sortable>
-                </div>
-            </Card>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={handleResetHeights}
+                                    title="Reset all heights and sort by luminance"
+                                    aria-label="Reset all heights and sorting"
+                                    className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-amber-600 hover:bg-amber-600/15 transition-colors select-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <RotateCcw className="w-4 h-4" />
+                                </button>
+                                <span className="px-2 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold">
+                                    {filtered.length} colors
+                                </span>
+                            </div>
+                        </div>
+                        <div className="h-px bg-border/50 mb-4" />
+                        <Sortable
+                            value={displayOrder.map(String)}
+                            onValueChange={handleColorOrderChange}
+                            orientation="vertical"
+                        >
+                            <SortableContent asChild>
+                                <div className="space-y-2">
+                                    {displayOrder.map((fi, idx) => {
+                                        const s = filtered[fi];
+                                        const val = colorSliceHeights[fi] ?? layerHeight;
+                                        const isFirst = idx === 0;
+                                        const minForRow = isFirst
+                                            ? Math.max(layerHeight, slicerFirstLayerHeight)
+                                            : layerHeight;
+                                        return (
+                                            <ThreeDColorRow
+                                                key={`${s.hex}-${fi}`}
+                                                fi={fi}
+                                                hex={s.hex}
+                                                value={val}
+                                                layerHeight={layerHeight}
+                                                minHeight={minForRow}
+                                                onChange={onRowChange}
+                                            />
+                                        );
+                                    })}
+                                </div>
+                            </SortableContent>
+                            <SortableOverlay>
+                                <div className="rounded-lg bg-primary/10 h-11" />
+                            </SortableOverlay>
+                        </Sortable>
+                    </Card>
+                </TabsContent>
+            </Tabs>
 
             {/* 3D printing instruction group (dynamic) */}
             <Card className="p-4 border border-border/50 mt-6">

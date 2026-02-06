@@ -28,17 +28,25 @@ import { ControlsPanel } from './components/ControlsPanel';
 
 const AUTOPAINT_STORAGE_KEY = 'kromacut.autopaint.v1';
 
-type AutoPaintPersisted = Pick<ThreeDControlsStateShape, 'filaments' | 'autoPaintEnabled'>;
+type AutoPaintPersisted = Pick<ThreeDControlsStateShape, 'filaments' | 'paintMode'>;
 
 const loadAutoPaintPersisted = (): AutoPaintPersisted | null => {
     try {
         const raw = localStorage.getItem(AUTOPAINT_STORAGE_KEY);
         if (!raw) return null;
-        const parsed = JSON.parse(raw) as AutoPaintPersisted;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const parsed = JSON.parse(raw) as any;
         if (!parsed || !Array.isArray(parsed.filaments)) return null;
+        // Migrate legacy `autoPaintEnabled` boolean → `paintMode`
+        const paintMode: 'manual' | 'autopaint' =
+            parsed.paintMode === 'autopaint' || parsed.paintMode === 'manual'
+                ? parsed.paintMode
+                : parsed.autoPaintEnabled
+                  ? 'autopaint'
+                  : 'manual';
         return {
             filaments: parsed.filaments,
-            autoPaintEnabled: Boolean(parsed.autoPaintEnabled),
+            paintMode,
         };
     } catch {
         return null;
@@ -106,7 +114,7 @@ function App(): React.ReactElement | null {
             filteredSwatches: [],
             pixelSize: 0.1,
             filaments: persisted?.filaments ?? [],
-            autoPaintEnabled: persisted?.autoPaintEnabled ?? false,
+            paintMode: persisted?.paintMode ?? 'manual',
         };
     });
     // Signal to force a rebuild of the 3D view when incremented
@@ -116,9 +124,9 @@ function App(): React.ReactElement | null {
     useEffect(() => {
         saveAutoPaintPersisted({
             filaments: threeDState.filaments,
-            autoPaintEnabled: threeDState.autoPaintEnabled ?? false,
+            paintMode: threeDState.paintMode ?? 'manual',
         });
-    }, [threeDState.filaments, threeDState.autoPaintEnabled]);
+    }, [threeDState.filaments, threeDState.paintMode]);
 
     // When the user switches to 3D mode, trigger the rebuild signal (same effect as the Rebuild button).
     // Schedule the rebuild on a short timeout so that the ThreeDControls have a chance to mount
@@ -181,9 +189,10 @@ function App(): React.ReactElement | null {
                 exportObjectTo3MFBlob(obj, {
                     layerHeight: threeDState.layerHeight,
                     firstLayerHeight: threeDState.slicerFirstLayerHeight,
-                    layerFilamentColors: threeDState.autoPaintEnabled
-                        ? threeDState.autoPaintFilamentSwatches?.map((s) => s.hex)
-                        : undefined,
+                    layerFilamentColors:
+                        threeDState.paintMode === 'autopaint'
+                            ? threeDState.autoPaintFilamentSwatches?.map((s) => s.hex)
+                            : undefined,
                 }),
             applyQuantize,
             swatches,
@@ -199,7 +208,7 @@ function App(): React.ReactElement | null {
                 prev.filteredSwatches === s.filteredSwatches &&
                 prev.pixelSize === s.pixelSize &&
                 prev.filaments === s.filaments &&
-                prev.autoPaintEnabled === s.autoPaintEnabled &&
+                prev.paintMode === s.paintMode &&
                 prev.autoPaintResult === s.autoPaintResult &&
                 prev.autoPaintSwatches === s.autoPaintSwatches &&
                 prev.autoPaintFilamentSwatches === s.autoPaintFilamentSwatches
@@ -342,7 +351,7 @@ function App(): React.ReactElement | null {
                                     swatches={threeDState.filteredSwatches}
                                     pixelSize={threeDState.pixelSize}
                                     rebuildSignal={threeDBuildSignal}
-                                    autoPaintEnabled={threeDState.autoPaintEnabled}
+                                    autoPaintEnabled={threeDState.paintMode === 'autopaint'}
                                     autoPaintTotalHeight={threeDState.autoPaintResult?.totalHeight}
                                 />
                             )}
