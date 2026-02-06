@@ -44,6 +44,8 @@ import {
     parseProfileFile,
     exportProfileBlob,
     profileFileName,
+    loadLastProfileId,
+    saveLastProfileId,
 } from '../lib/profileManager';
 
 /**
@@ -250,7 +252,23 @@ const FilamentRow = React.memo(function FilamentRow({
 });
 
 export default function ThreeDControls({ swatches, onChange, persisted }: ThreeDControlsProps) {
-    // 3D printing controls (owned by this component)
+    const [initialState] = useState(() => {
+        const loadedProfiles = loadProfiles();
+        const lastId = loadLastProfileId();
+        const activeProfile = lastId ? loadedProfiles.find((p) => p.id === lastId) : null;
+        return {
+            profiles: loadedProfiles,
+            activeProfileId: activeProfile ? activeProfile.id : null,
+            // Only use profile filaments if no persisted filaments AND we have an active profile
+            initialFilaments:
+                activeProfile
+                    ? activeProfile.filaments.map((f) => ({ ...f }))
+                    : (persisted?.filaments?.length ?? 0) > 0
+                    ? persisted!.filaments
+                    : [],
+        };
+    });
+
     const [layerHeight, setLayerHeight] = useState<number>(persisted?.layerHeight ?? 0.12); // mm
     const [slicerFirstLayerHeight, setSlicerFirstLayerHeight] = useState<number>(
         persisted?.slicerFirstLayerHeight ?? 0.2
@@ -259,7 +277,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         persisted?.colorSliceHeights?.slice() ?? []
     );
     const [pixelSize, setPixelSize] = useState<number>(persisted?.pixelSize ?? 0.1); // mm per pixel (XY plane)
-    const [filaments, setFilaments] = useState<Filament[]>(persisted?.filaments?.slice() ?? []);
+    const [filaments, setFilaments] = useState<Filament[]>(initialState.initialFilaments);
     const [autoPaintEnabled, setAutoPaintEnabled] = useState<boolean>(
         persisted?.autoPaintEnabled ?? false
     );
@@ -267,8 +285,10 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
     const [autoPaintMaxHeight, setAutoPaintMaxHeight] = useState<number | undefined>(undefined);
 
     // Profile management state
-    const [profiles, setProfiles] = useState<AutoPaintProfile[]>(() => loadProfiles());
-    const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+    const [profiles, setProfiles] = useState<AutoPaintProfile[]>(initialState.profiles);
+    const [activeProfileId, setActiveProfileId] = useState<string | null>(
+        initialState.activeProfileId
+    );
     const [showSaveNewPopover, setShowSaveNewPopover] = useState(false);
     const [saveProfileName, setSaveProfileName] = useState('');
     const [importFeedback, setImportFeedback] = useState<string | null>(null);
@@ -294,6 +314,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
             setProfiles(updated);
             saveProfilesToStorage(updated);
             setActiveProfileId(newProfile.id);
+            saveLastProfileId(newProfile.id);
             setShowSaveNewPopover(false);
             setSaveProfileName('');
         },
@@ -313,6 +334,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
             const profile = profiles.find((p) => p.id === id);
             if (!profile) return;
             setActiveProfileId(id);
+            saveLastProfileId(id);
             setFilaments(profile.filaments.map((f) => ({ ...f })));
         },
         [profiles]
@@ -325,6 +347,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
             saveProfilesToStorage(updated);
             if (activeProfileId === id) {
                 setActiveProfileId(null);
+                saveLastProfileId(null);
             }
         },
         [profiles, activeProfileId]
@@ -381,6 +404,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                 if (result.imported.length > 0) {
                     const first = result.imported[0];
                     setActiveProfileId(first.id);
+                    saveLastProfileId(first.id);
                     setFilaments(first.filaments.map((f) => ({ ...f })));
                 }
             };

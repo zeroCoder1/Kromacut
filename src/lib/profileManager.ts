@@ -12,6 +12,7 @@ export interface AutoPaintProfile {
 export const CURRENT_PROFILE_VERSION = 1;
 
 const PROFILES_STORAGE_KEY = 'kromacut.autopaint.profiles';
+const LAST_PROFILE_KEY = 'kromacut.autopaint.lastProfileId';
 
 export function loadProfiles(): AutoPaintProfile[] {
     try {
@@ -27,6 +28,26 @@ export function loadProfiles(): AutoPaintProfile[] {
         );
     } catch {
         return [];
+    }
+}
+
+export function loadLastProfileId(): string | null {
+    try {
+        return localStorage.getItem(LAST_PROFILE_KEY);
+    } catch {
+        return null;
+    }
+}
+
+export function saveLastProfileId(id: string | null) {
+    try {
+        if (id) {
+            localStorage.setItem(LAST_PROFILE_KEY, id);
+        } else {
+            localStorage.removeItem(LAST_PROFILE_KEY);
+        }
+    } catch {
+        // ignore
     }
 }
 
