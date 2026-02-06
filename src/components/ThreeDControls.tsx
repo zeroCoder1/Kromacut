@@ -4,7 +4,14 @@ import { NumberInput, Input } from '@/components/ui/input';
 import ThreeDColorRow from './ThreeDColorRow';
 import { Sortable, SortableContent, SortableOverlay } from '@/components/ui/sortable';
 import { Button } from '@/components/ui/button';
-import { Check, RotateCcw, Plus, Trash2, Sparkles, Wand2 } from 'lucide-react';
+import { Check, RotateCcw, Plus, Trash2, Sparkles, Wand2, Save, Download, Upload } from 'lucide-react';
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from '@/components/ui/select';
 import { HexColorPicker } from 'react-colorful';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Switch } from '@/components/ui/switch';
@@ -58,6 +65,40 @@ export interface Filament {
     id: string;
     color: string;
     td: number;
+}
+
+export interface AutoPaintProfile {
+    id: string;
+    name: string;
+    filaments: Filament[];
+    createdAt: number;
+}
+
+const PROFILES_STORAGE_KEY = 'kromacut.autopaint.profiles';
+
+function loadProfiles(): AutoPaintProfile[] {
+    try {
+        const raw = localStorage.getItem(PROFILES_STORAGE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw) as AutoPaintProfile[];
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter(
+            (p) =>
+                typeof p.id === 'string' &&
+                typeof p.name === 'string' &&
+                Array.isArray(p.filaments)
+        );
+    } catch {
+        return [];
+    }
+}
+
+function saveProfilesToStorage(profiles: AutoPaintProfile[]) {
+    try {
+        localStorage.setItem(PROFILES_STORAGE_KEY, JSON.stringify(profiles));
+    } catch {
+        // ignore storage errors
+    }
 }
 
 export interface ThreeDControlsStateShape {
@@ -235,6 +276,118 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
     );
     // Max height constraint for auto-paint (undefined = use ideal/automatic height)
     const [autoPaintMaxHeight, setAutoPaintMaxHeight] = useState<number | undefined>(undefined);
+
+    // Profile management state
+    const [profiles, setProfiles] = useState<AutoPaintProfile[]>(() => loadProfiles());
+    const [selectedProfileId, setSelectedProfileId] = useState<string | undefined>(undefined);
+    const [showSavePopover, setShowSavePopover] = useState(false);
+    const [saveProfileName, setSaveProfileName] = useState('');
+    const importInputRef = useRef<HTMLInputElement>(null);
+
+    const handleSaveProfile = useCallback(
+        (name: string) => {
+            if (!name.trim()) return;
+            const newProfile: AutoPaintProfile = {
+                id: crypto.randomUUID(),
+                name: name.trim(),
+                filaments: filaments.map((f) => ({ ...f })),
+                createdAt: Date.now(),
+            };
+            const updated = [...profiles, newProfile];
+            setProfiles(updated);
+            saveProfilesToStorage(updated);
+            setSelectedProfileId(newProfile.id);
+            setShowSavePopover(false);
+            setSaveProfileName('');
+        },
+        [filaments, profiles]
+    );
+
+    const handleLoadProfile = useCallback(
+        (id: string) => {
+            const profile = profiles.find((p) => p.id === id);
+            if (!profile) return;
+            setSelectedProfileId(id);
+            setFilaments(profile.filaments.map((f) => ({ ...f })));
+        },
+        [profiles]
+    );
+
+    const handleDeleteProfile = useCallback(
+        (id: string) => {
+            const updated = profiles.filter((p) => p.id !== id);
+            setProfiles(updated);
+            saveProfilesToStorage(updated);
+            if (selectedProfileId === id) {
+                setSelectedProfileId(undefined);
+            }
+        },
+        [profiles, selectedProfileId]
+    );
+
+    const handleExportProfile = useCallback(() => {
+        const profile: AutoPaintProfile = {
+            id: crypto.randomUUID(),
+            name: profiles.find((p) => p.id === selectedProfileId)?.name ?? 'Exported Profile',
+            filaments: filaments.map((f) => ({ ...f })),
+            createdAt: Date.now(),
+        };
+        const blob = new Blob([JSON.stringify(profile, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${profile.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.kapp`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    }, [filaments, profiles, selectedProfileId]);
+
+    const handleImportProfile = useCallback(
+        (e: React.ChangeEvent<HTMLInputElement>) => {
+            const file = e.target.files?.[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                try {
+                    const parsed = JSON.parse(reader.result as string) as AutoPaintProfile;
+                    if (
+                        !parsed ||
+                        typeof parsed.name !== 'string' ||
+                        !Array.isArray(parsed.filaments)
+                    ) {
+                        console.error('Invalid profile file');
+                        return;
+                    }
+                    // Ensure valid filaments
+                    const validFilaments = parsed.filaments.filter(
+                        (f) =>
+                            typeof f.id === 'string' &&
+                            typeof f.color === 'string' &&
+                            typeof f.td === 'number'
+                    );
+                    const imported: AutoPaintProfile = {
+                        id: crypto.randomUUID(),
+                        name: parsed.name,
+                        filaments: validFilaments,
+                        createdAt: Date.now(),
+                    };
+                    const updated = [...profiles, imported];
+                    setProfiles(updated);
+                    saveProfilesToStorage(updated);
+                    // Auto-load the imported profile
+                    setSelectedProfileId(imported.id);
+                    setFilaments(imported.filaments.map((f) => ({ ...f })));
+                } catch {
+                    console.error('Failed to parse profile file');
+                }
+            };
+            reader.readAsText(file);
+            // Reset input so the same file can be re-imported
+            e.target.value = '';
+        },
+        [profiles]
+    );
 
     // derive non-transparent swatches once per render and memoize
     const filtered = useMemo(() => {
@@ -877,6 +1030,139 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                     </p>
                 </div>
                 <div className="h-px bg-border/50 my-4" />
+
+                {/* Profiles Section */}
+                <div
+                    className={`space-y-2 mb-4 transition-opacity duration-200 ${autoPaintEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}
+                >
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold text-foreground">Profiles</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                        <Select
+                            value={selectedProfileId ?? ''}
+                            onValueChange={handleLoadProfile}
+                        >
+                            <SelectTrigger className="h-8 text-xs flex-1">
+                                <SelectValue placeholder="Select a profile..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {profiles.length === 0 ? (
+                                    <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                                        No saved profiles
+                                    </div>
+                                ) : (
+                                    profiles.map((p) => (
+                                        <SelectItem key={p.id} value={p.id} className="text-xs">
+                                            <div className="flex items-center gap-2">
+                                                <div className="flex gap-0.5">
+                                                    {p.filaments.slice(0, 4).map((f, i) => (
+                                                        <span
+                                                            key={i}
+                                                            className="w-3 h-3 rounded-full border border-border/50"
+                                                            style={{
+                                                                backgroundColor: f.color,
+                                                            }}
+                                                        />
+                                                    ))}
+                                                    {p.filaments.length > 4 && (
+                                                        <span className="text-[9px] text-muted-foreground ml-0.5">
+                                                            +{p.filaments.length - 4}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <span>{p.name}</span>
+                                            </div>
+                                        </SelectItem>
+                                    ))
+                                )}
+                            </SelectContent>
+                        </Select>
+
+                        {/* Save */}
+                        <Popover open={showSavePopover} onOpenChange={setShowSavePopover}>
+                            <PopoverTrigger asChild>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-muted-foreground hover:text-primary cursor-pointer flex-shrink-0"
+                                    title="Save current filaments as a profile"
+                                >
+                                    <Save className="w-4 h-4" />
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-64 p-3" align="end">
+                                <div className="space-y-2">
+                                    <h4 className="text-xs font-semibold">Save Profile</h4>
+                                    <Input
+                                        placeholder="Profile name..."
+                                        value={saveProfileName}
+                                        onChange={(e) => setSaveProfileName(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                handleSaveProfile(saveProfileName);
+                                            }
+                                        }}
+                                        className="h-8 text-xs"
+                                        autoFocus
+                                    />
+                                    <Button
+                                        size="sm"
+                                        onClick={() => handleSaveProfile(saveProfileName)}
+                                        disabled={!saveProfileName.trim()}
+                                        className="w-full h-7 text-xs cursor-pointer"
+                                    >
+                                        Save
+                                    </Button>
+                                </div>
+                            </PopoverContent>
+                        </Popover>
+
+                        {/* Import */}
+                        <input
+                            ref={importInputRef}
+                            type="file"
+                            accept=".kapp,.json"
+                            className="hidden"
+                            onChange={handleImportProfile}
+                        />
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-primary cursor-pointer flex-shrink-0"
+                            title="Import profile from file"
+                            onClick={() => importInputRef.current?.click()}
+                        >
+                            <Upload className="w-4 h-4" />
+                        </Button>
+
+                        {/* Export */}
+                        <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-muted-foreground hover:text-primary cursor-pointer flex-shrink-0"
+                            title="Export current filaments as .kapp file"
+                            onClick={handleExportProfile}
+                            disabled={filaments.length === 0}
+                        >
+                            <Download className="w-4 h-4" />
+                        </Button>
+
+                        {/* Delete */}
+                        {selectedProfileId && (
+                            <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer flex-shrink-0"
+                                title="Delete selected profile"
+                                onClick={() => handleDeleteProfile(selectedProfileId)}
+                            >
+                                <Trash2 className="w-4 h-4" />
+                            </Button>
+                        )}
+                    </div>
+                </div>
+
                 <div
                     className={`space-y-3 transition-opacity duration-200 ${autoPaintEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}
                 >
