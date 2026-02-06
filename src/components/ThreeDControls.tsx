@@ -1070,14 +1070,9 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                 <TabsContent value="autopaint">
                     <Card className="p-4 border border-border/50">
                         <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                                <h3 className="text-sm font-semibold text-foreground">
-                                    Auto-paint
-                                </h3>
-                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20 uppercase tracking-wide">
-                                    Experimental
-                                </span>
-                            </div>
+                            <h3 className="text-sm font-semibold text-foreground">
+                                Auto-paint
+                            </h3>
                             <p className="text-xs text-muted-foreground">
                                 Define filament colors and transmission distances for automatic
                                 painting
