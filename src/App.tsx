@@ -218,7 +218,7 @@ function App(): React.ReactElement | null {
             swatches,
         });
     // Thresholds for build warnings
-    const COLOR_WARNING_THRESHOLD = 180;
+    const LAYER_WARNING_THRESHOLD = 64;
     const PIXEL_WARNING_THRESHOLD = 1000000;
 
     // Apply state without warning (used after user confirms, or when no warning needed)
@@ -234,11 +234,11 @@ function App(): React.ReactElement | null {
         (s: ThreeDControlsStateShape) => {
             const warnings: string[] = [];
 
-            // Check color count
-            const colorCount = s.filteredSwatches?.length ?? 0;
-            if (colorCount > COLOR_WARNING_THRESHOLD) {
+            // Check layer count (each entry in colorOrder = one greedy mesh pass)
+            const layerCount = s.colorOrder?.length ?? 0;
+            if (layerCount > LAYER_WARNING_THRESHOLD) {
                 warnings.push(
-                    `The image has ${colorCount} colors. Consider reducing colors in 2D mode first for better performance.`
+                    `The model will have ${layerCount} layers to build. Consider reducing colors in 2D mode first for better performance.`
                 );
             }
 
