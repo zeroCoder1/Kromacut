@@ -219,7 +219,7 @@ function App(): React.ReactElement | null {
         });
     // Thresholds for build warnings
     const COLOR_WARNING_THRESHOLD = 180;
-    const PIXEL_WARNING_THRESHOLD = 2500000;
+    const PIXEL_WARNING_THRESHOLD = 1000000;
 
     // Apply state without warning (used after user confirms, or when no warning needed)
     const applyThreeDState = useCallback((s: ThreeDControlsStateShape) => {
