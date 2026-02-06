@@ -4,7 +4,18 @@ import { NumberInput, Input } from '@/components/ui/input';
 import ThreeDColorRow from './ThreeDColorRow';
 import { Sortable, SortableContent, SortableOverlay } from '@/components/ui/sortable';
 import { Button } from '@/components/ui/button';
-import { Check, RotateCcw, Plus, Trash2, Sparkles, Wand2, Save, Download, Upload } from 'lucide-react';
+import {
+    Check,
+    RotateCcw,
+    Plus,
+    Trash2,
+    Sparkles,
+    Wand2,
+    Save,
+    Download,
+    Upload,
+    FilePlus,
+} from 'lucide-react';
 import {
     Select,
     SelectContent,
@@ -22,6 +33,18 @@ import {
     type AutoPaintResult,
     type TransitionZone,
 } from '../lib/autoPaint';
+import {
+    type AutoPaintProfile,
+    loadProfiles,
+    saveProfilesToStorage,
+    createProfile,
+    overwriteProfile,
+    deleteProfile as deleteProfileFromList,
+    importProfiles,
+    parseProfileFile,
+    exportProfileBlob,
+    profileFileName,
+} from '../lib/profileManager';
 
 /**
  * Estimate Transmission Distance (TD) from a hex color.
@@ -65,40 +88,6 @@ export interface Filament {
     id: string;
     color: string;
     td: number;
-}
-
-export interface AutoPaintProfile {
-    id: string;
-    name: string;
-    filaments: Filament[];
-    createdAt: number;
-}
-
-const PROFILES_STORAGE_KEY = 'kromacut.autopaint.profiles';
-
-function loadProfiles(): AutoPaintProfile[] {
-    try {
-        const raw = localStorage.getItem(PROFILES_STORAGE_KEY);
-        if (!raw) return [];
-        const parsed = JSON.parse(raw) as AutoPaintProfile[];
-        if (!Array.isArray(parsed)) return [];
-        return parsed.filter(
-            (p) =>
-                typeof p.id === 'string' &&
-                typeof p.name === 'string' &&
-                Array.isArray(p.filaments)
-        );
-    } catch {
-        return [];
-    }
-}
-
-function saveProfilesToStorage(profiles: AutoPaintProfile[]) {
-    try {
-        localStorage.setItem(PROFILES_STORAGE_KEY, JSON.stringify(profiles));
-    } catch {
-        // ignore storage errors
-    }
 }
 
 export interface ThreeDControlsStateShape {
@@ -279,35 +268,53 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
 
     // Profile management state
     const [profiles, setProfiles] = useState<AutoPaintProfile[]>(() => loadProfiles());
-    const [selectedProfileId, setSelectedProfileId] = useState<string | undefined>(undefined);
-    const [showSavePopover, setShowSavePopover] = useState(false);
+    const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+    const [showSaveNewPopover, setShowSaveNewPopover] = useState(false);
+    const [showOverwriteConfirm, setShowOverwriteConfirm] = useState(false);
     const [saveProfileName, setSaveProfileName] = useState('');
+    const [importFeedback, setImportFeedback] = useState<string | null>(null);
     const importInputRef = useRef<HTMLInputElement>(null);
 
-    const handleSaveProfile = useCallback(
+    // Dirty state: detect if current filaments differ from the active profile's
+    const isDirty = useMemo(() => {
+        if (!activeProfileId) return false;
+        const active = profiles.find((p) => p.id === activeProfileId);
+        if (!active) return false;
+        if (active.filaments.length !== filaments.length) return true;
+        return active.filaments.some(
+            (af, i) => af.color !== filaments[i].color || af.td !== filaments[i].td
+        );
+    }, [activeProfileId, profiles, filaments]);
+
+    // Save New: always creates a new profile
+    const handleSaveNewProfile = useCallback(
         (name: string) => {
             if (!name.trim()) return;
-            const newProfile: AutoPaintProfile = {
-                id: crypto.randomUUID(),
-                name: name.trim(),
-                filaments: filaments.map((f) => ({ ...f })),
-                createdAt: Date.now(),
-            };
+            const newProfile = createProfile(name, filaments);
             const updated = [...profiles, newProfile];
             setProfiles(updated);
             saveProfilesToStorage(updated);
-            setSelectedProfileId(newProfile.id);
-            setShowSavePopover(false);
+            setActiveProfileId(newProfile.id);
+            setShowSaveNewPopover(false);
             setSaveProfileName('');
         },
         [filaments, profiles]
     );
 
+    // Save (overwrite): updates existing profile in-place
+    const handleOverwriteProfile = useCallback(() => {
+        if (!activeProfileId) return;
+        const updated = overwriteProfile(profiles, activeProfileId, filaments);
+        setProfiles(updated);
+        saveProfilesToStorage(updated);
+        setShowOverwriteConfirm(false);
+    }, [activeProfileId, filaments, profiles]);
+
     const handleLoadProfile = useCallback(
         (id: string) => {
             const profile = profiles.find((p) => p.id === id);
             if (!profile) return;
-            setSelectedProfileId(id);
+            setActiveProfileId(id);
             setFilaments(profile.filaments.map((f) => ({ ...f })));
         },
         [profiles]
@@ -315,79 +322,82 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
 
     const handleDeleteProfile = useCallback(
         (id: string) => {
-            const updated = profiles.filter((p) => p.id !== id);
+            const updated = deleteProfileFromList(profiles, id);
             setProfiles(updated);
             saveProfilesToStorage(updated);
-            if (selectedProfileId === id) {
-                setSelectedProfileId(undefined);
+            if (activeProfileId === id) {
+                setActiveProfileId(null);
             }
         },
-        [profiles, selectedProfileId]
+        [profiles, activeProfileId]
     );
 
     const handleExportProfile = useCallback(() => {
-        const profile: AutoPaintProfile = {
-            id: crypto.randomUUID(),
-            name: profiles.find((p) => p.id === selectedProfileId)?.name ?? 'Exported Profile',
-            filaments: filaments.map((f) => ({ ...f })),
-            createdAt: Date.now(),
-        };
-        const blob = new Blob([JSON.stringify(profile, null, 2)], { type: 'application/json' });
+        const active = profiles.find((p) => p.id === activeProfileId);
+        const profile = createProfile(
+            active?.name ?? 'Exported Profile',
+            filaments
+        );
+        // Preserve original ID if exporting active profile
+        if (active) profile.id = active.id;
+
+        const blob = exportProfileBlob(profile);
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${profile.name.replace(/[^a-zA-Z0-9_-]/g, '_')}.kapp`;
+        a.download = profileFileName(profile.name);
         document.body.appendChild(a);
         a.click();
         a.remove();
         URL.revokeObjectURL(url);
-    }, [filaments, profiles, selectedProfileId]);
+    }, [filaments, profiles, activeProfileId]);
 
-    const handleImportProfile = useCallback(
+    const handleImportFile = useCallback(
         (e: React.ChangeEvent<HTMLInputElement>) => {
             const file = e.target.files?.[0];
             if (!file) return;
             const reader = new FileReader();
             reader.onload = () => {
-                try {
-                    const parsed = JSON.parse(reader.result as string) as AutoPaintProfile;
-                    if (
-                        !parsed ||
-                        typeof parsed.name !== 'string' ||
-                        !Array.isArray(parsed.filaments)
-                    ) {
-                        console.error('Invalid profile file');
-                        return;
-                    }
-                    // Ensure valid filaments
-                    const validFilaments = parsed.filaments.filter(
-                        (f) =>
-                            typeof f.id === 'string' &&
-                            typeof f.color === 'string' &&
-                            typeof f.td === 'number'
-                    );
-                    const imported: AutoPaintProfile = {
-                        id: crypto.randomUUID(),
-                        name: parsed.name,
-                        filaments: validFilaments,
-                        createdAt: Date.now(),
-                    };
-                    const updated = [...profiles, imported];
-                    setProfiles(updated);
-                    saveProfilesToStorage(updated);
-                    // Auto-load the imported profile
-                    setSelectedProfileId(imported.id);
-                    setFilaments(imported.filaments.map((f) => ({ ...f })));
-                } catch {
-                    console.error('Failed to parse profile file');
+                const incoming = parseProfileFile(reader.result as string);
+                if (!incoming) {
+                    console.error('Invalid profile file');
+                    return;
+                }
+                const result = importProfiles(profiles, incoming);
+                setProfiles(result.profiles);
+                saveProfilesToStorage(result.profiles);
+
+                // Build feedback message
+                const parts: string[] = [];
+                if (result.imported.length > 0)
+                    parts.push(`${result.imported.length} imported`);
+                if (result.overwritten.length > 0)
+                    parts.push(`${result.overwritten.length} overwritten`);
+                if (result.skipped.length > 0)
+                    parts.push(`${result.skipped.length} skipped (duplicates)`);
+                if (result.renamed.length > 0)
+                    parts.push(`${result.renamed.length} renamed`);
+                setImportFeedback(parts.join(', ') || 'No profiles found');
+
+                // Auto-load the first imported profile
+                if (result.imported.length > 0) {
+                    const first = result.imported[0];
+                    setActiveProfileId(first.id);
+                    setFilaments(first.filaments.map((f) => ({ ...f })));
                 }
             };
             reader.readAsText(file);
-            // Reset input so the same file can be re-imported
             e.target.value = '';
         },
         [profiles]
     );
+
+    // Clear import feedback after a few seconds
+    useEffect(() => {
+        if (!importFeedback) return;
+        const timer = setTimeout(() => setImportFeedback(null), 4000);
+        return () => clearTimeout(timer);
+    }, [importFeedback]);
 
     // derive non-transparent swatches once per render and memoize
     const filtered = useMemo(() => {
@@ -1037,14 +1047,19 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                 >
                     <div className="flex items-center gap-2">
                         <span className="text-xs font-semibold text-foreground">Profiles</span>
+                        {activeProfileId && isDirty && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 border border-amber-500/20">
+                                Unsaved changes
+                            </span>
+                        )}
                     </div>
                     <div className="flex items-center gap-1.5">
                         <Select
-                            value={selectedProfileId ?? ''}
+                            value={activeProfileId ?? ''}
                             onValueChange={handleLoadProfile}
                         >
                             <SelectTrigger className="h-8 text-xs flex-1">
-                                <SelectValue placeholder="Select a profile..." />
+                                <SelectValue placeholder="Unsaved Configuration" />
                             </SelectTrigger>
                             <SelectContent>
                                 {profiles.length === 0 ? (
@@ -1079,28 +1094,73 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                             </SelectContent>
                         </Select>
 
-                        {/* Save */}
-                        <Popover open={showSavePopover} onOpenChange={setShowSavePopover}>
+                        {/* Save (overwrite active profile) */}
+                        <Popover
+                            open={showOverwriteConfirm}
+                            onOpenChange={setShowOverwriteConfirm}
+                        >
                             <PopoverTrigger asChild>
                                 <Button
                                     variant="ghost"
                                     size="icon"
-                                    className="h-8 w-8 text-muted-foreground hover:text-primary cursor-pointer flex-shrink-0"
-                                    title="Save current filaments as a profile"
+                                    className="h-8 w-8 text-muted-foreground hover:text-primary cursor-pointer flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed"
+                                    title="Save changes to current profile"
+                                    disabled={!activeProfileId || !isDirty}
                                 >
                                     <Save className="w-4 h-4" />
                                 </Button>
                             </PopoverTrigger>
                             <PopoverContent className="w-64 p-3" align="end">
                                 <div className="space-y-2">
-                                    <h4 className="text-xs font-semibold">Save Profile</h4>
+                                    <h4 className="text-xs font-semibold">Overwrite Profile</h4>
+                                    <p className="text-[11px] text-muted-foreground">
+                                        Save current filaments over &quot;
+                                        {profiles.find((p) => p.id === activeProfileId)?.name}
+                                        &quot;?
+                                    </p>
+                                    <div className="flex gap-2">
+                                        <Button
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={() => setShowOverwriteConfirm(false)}
+                                            className="flex-1 h-7 text-xs cursor-pointer"
+                                        >
+                                            Cancel
+                                        </Button>
+                                        <Button
+                                            size="sm"
+                                            onClick={handleOverwriteProfile}
+                                            className="flex-1 h-7 text-xs cursor-pointer"
+                                        >
+                                            Overwrite
+                                        </Button>
+                                    </div>
+                                </div>
+                            </PopoverContent>
+                        </Popover>
+
+                        {/* Save New */}
+                        <Popover open={showSaveNewPopover} onOpenChange={setShowSaveNewPopover}>
+                            <PopoverTrigger asChild>
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-muted-foreground hover:text-primary cursor-pointer flex-shrink-0"
+                                    title="Save as new profile"
+                                >
+                                    <FilePlus className="w-4 h-4" />
+                                </Button>
+                            </PopoverTrigger>
+                            <PopoverContent className="w-64 p-3" align="end">
+                                <div className="space-y-2">
+                                    <h4 className="text-xs font-semibold">Save New Profile</h4>
                                     <Input
                                         placeholder="Profile name..."
                                         value={saveProfileName}
                                         onChange={(e) => setSaveProfileName(e.target.value)}
                                         onKeyDown={(e) => {
                                             if (e.key === 'Enter') {
-                                                handleSaveProfile(saveProfileName);
+                                                handleSaveNewProfile(saveProfileName);
                                             }
                                         }}
                                         className="h-8 text-xs"
@@ -1108,7 +1168,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                                     />
                                     <Button
                                         size="sm"
-                                        onClick={() => handleSaveProfile(saveProfileName)}
+                                        onClick={() => handleSaveNewProfile(saveProfileName)}
                                         disabled={!saveProfileName.trim()}
                                         className="w-full h-7 text-xs cursor-pointer"
                                     >
@@ -1124,7 +1184,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                             type="file"
                             accept=".kapp,.json"
                             className="hidden"
-                            onChange={handleImportProfile}
+                            onChange={handleImportFile}
                         />
                         <Button
                             variant="ghost"
@@ -1149,18 +1209,25 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                         </Button>
 
                         {/* Delete */}
-                        {selectedProfileId && (
+                        {activeProfileId && (
                             <Button
                                 variant="ghost"
                                 size="icon"
                                 className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 cursor-pointer flex-shrink-0"
                                 title="Delete selected profile"
-                                onClick={() => handleDeleteProfile(selectedProfileId)}
+                                onClick={() => handleDeleteProfile(activeProfileId)}
                             >
                                 <Trash2 className="w-4 h-4" />
                             </Button>
                         )}
                     </div>
+
+                    {/* Import feedback */}
+                    {importFeedback && (
+                        <div className="text-[10px] px-2 py-1 rounded bg-primary/10 text-primary border border-primary/20">
+                            {importFeedback}
+                        </div>
+                    )}
                 </div>
 
                 <div
