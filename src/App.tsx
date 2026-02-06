@@ -128,7 +128,7 @@ function App(): React.ReactElement | null {
         };
     });
     // Signal to force a rebuild of the 3D view when incremented
-    const [threeDBuildSignal] = useState(0);
+    const [threeDBuildSignal, setThreeDBuildSignal] = useState(0);
     const prevModeRef = useRef<typeof mode>(mode);
     // Track image dimensions for build warnings
     const [imageDimensions, setImageDimensions] = useState<{ w: number; h: number } | null>(null);
@@ -223,24 +223,10 @@ function App(): React.ReactElement | null {
 
     // Apply state without warning (used after user confirms, or when no warning needed)
     const applyThreeDState = useCallback((s: ThreeDControlsStateShape) => {
-        setThreeDState((prev) => {
-            if (
-                prev.layerHeight === s.layerHeight &&
-                prev.slicerFirstLayerHeight === s.slicerFirstLayerHeight &&
-                prev.colorSliceHeights === s.colorSliceHeights &&
-                prev.colorOrder === s.colorOrder &&
-                prev.filteredSwatches === s.filteredSwatches &&
-                prev.pixelSize === s.pixelSize &&
-                prev.filaments === s.filaments &&
-                prev.paintMode === s.paintMode &&
-                prev.autoPaintResult === s.autoPaintResult &&
-                prev.autoPaintSwatches === s.autoPaintSwatches &&
-                prev.autoPaintFilamentSwatches === s.autoPaintFilamentSwatches
-            ) {
-                return prev; // no change; avoid triggering rerender cascade
-            }
-            return s;
-        });
+        setThreeDState(s);
+        // Always bump the rebuild signal so ThreeDView is forced to build,
+        // even if the serialized paramsKey happens to match a previous build.
+        setThreeDBuildSignal((n) => n + 1);
     }, []);
 
     // Stable handler that checks for warnings before applying
