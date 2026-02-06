@@ -24,6 +24,16 @@ import { exportObjectTo3MFBlob } from './lib/export3mf';
 import { useAppHandlers } from './hooks/useAppHandlers';
 import ResizableSplitter from './components/ResizableSplitter';
 import { ControlsPanel } from './components/ControlsPanel';
+import {
+    AlertDialog,
+    AlertDialogContent,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogAction,
+    AlertDialogCancel,
+} from './components/ui/alert-dialog';
 // ...existing imports
 
 const AUTOPAINT_STORAGE_KEY = 'kromacut.autopaint.v1';
@@ -118,8 +128,15 @@ function App(): React.ReactElement | null {
         };
     });
     // Signal to force a rebuild of the 3D view when incremented
-    const [threeDBuildSignal, setThreeDBuildSignal] = useState(0);
+    const [threeDBuildSignal] = useState(0);
     const prevModeRef = useRef<typeof mode>(mode);
+    // Track image dimensions for build warnings
+    const [imageDimensions, setImageDimensions] = useState<{ w: number; h: number } | null>(null);
+    // Warning dialog state
+    const [buildWarning, setBuildWarning] = useState<{
+        warnings: string[];
+        pendingState: ThreeDControlsStateShape;
+    } | null>(null);
 
     useEffect(() => {
         saveAutoPaintPersisted({
@@ -128,24 +145,27 @@ function App(): React.ReactElement | null {
         });
     }, [threeDState.filaments, threeDState.paintMode]);
 
-    // When the user switches to 3D mode, trigger the rebuild signal (same effect as the Rebuild button).
-    // Schedule the rebuild on a short timeout so that the ThreeDControls have a chance to mount
-    // and emit their initial state (filteredSwatches / color heights) before ThreeDView starts building.
+    // No auto-build on tab switch — the user must click "Build 3D Model" / "Apply Changes".
     useEffect(() => {
-        let t: number | undefined;
-        if (prevModeRef.current !== mode && mode === '3d') {
-            t = window.setTimeout(() => setThreeDBuildSignal((s) => s + 1), 50);
-        }
         prevModeRef.current = mode;
-        return () => {
-            if (t) clearTimeout(t);
-        };
     }, [mode]);
 
     // removed duplicate syncing: manual changes to the numeric input should set Auto via onWeightChange
     // redraw when image changes
     useEffect(() => {
         canvasPreviewRef.current?.redraw();
+    }, [imageSrc]);
+
+    // Track image dimensions for build warning checks
+    useEffect(() => {
+        if (!imageSrc) {
+            setImageDimensions(null);
+            return;
+        }
+        const img = new Image();
+        img.onload = () => setImageDimensions({ w: img.naturalWidth, h: img.naturalHeight });
+        img.onerror = () => setImageDimensions(null);
+        img.src = imageSrc;
     }, [imageSrc]);
 
     const handleFiles = (file?: File) => {
@@ -197,8 +217,12 @@ function App(): React.ReactElement | null {
             applyQuantize,
             swatches,
         });
-    // Stable handler to avoid recreating function each render and to prevent redundant state sets
-    const handleThreeDStateChange = useCallback((s: ThreeDControlsStateShape) => {
+    // Thresholds for build warnings
+    const COLOR_WARNING_THRESHOLD = 180;
+    const PIXEL_WARNING_THRESHOLD = 2500000;
+
+    // Apply state without warning (used after user confirms, or when no warning needed)
+    const applyThreeDState = useCallback((s: ThreeDControlsStateShape) => {
         setThreeDState((prev) => {
             if (
                 prev.layerHeight === s.layerHeight &&
@@ -217,6 +241,50 @@ function App(): React.ReactElement | null {
             }
             return s;
         });
+    }, []);
+
+    // Stable handler that checks for warnings before applying
+    const handleThreeDStateChange = useCallback(
+        (s: ThreeDControlsStateShape) => {
+            const warnings: string[] = [];
+
+            // Check color count
+            const colorCount = s.filteredSwatches?.length ?? 0;
+            if (colorCount > COLOR_WARNING_THRESHOLD) {
+                warnings.push(
+                    `The image has ${colorCount} colors. Consider reducing colors in 2D mode first for better performance.`
+                );
+            }
+
+            // Check image resolution
+            if (imageDimensions) {
+                const totalPixels = imageDimensions.w * imageDimensions.h;
+                if (totalPixels > PIXEL_WARNING_THRESHOLD) {
+                    warnings.push(
+                        `The image resolution is ${imageDimensions.w}\u00D7${imageDimensions.h} (${(totalPixels / 1000).toFixed(0)}k pixels). Large images may take a long time to build and use significant memory.`
+                    );
+                }
+            }
+
+            if (warnings.length > 0) {
+                setBuildWarning({ warnings, pendingState: s });
+            } else {
+                applyThreeDState(s);
+            }
+        },
+        [imageDimensions, applyThreeDState]
+    );
+
+    // Confirm build despite warnings
+    const confirmBuild = useCallback(() => {
+        if (buildWarning) {
+            applyThreeDState(buildWarning.pendingState);
+            setBuildWarning(null);
+        }
+    }, [buildWarning, applyThreeDState]);
+
+    const cancelBuild = useCallback(() => {
+        setBuildWarning(null);
     }, []);
 
     return (
@@ -389,6 +457,33 @@ function App(): React.ReactElement | null {
                     </main>
                 </ResizableSplitter>
             </div>
+
+            {/* Build warning dialog */}
+            <AlertDialog
+                open={buildWarning !== null}
+                onOpenChange={(open) => !open && cancelBuild()}
+            >
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Performance Warning</AlertDialogTitle>
+                        <AlertDialogDescription asChild>
+                            <div className="space-y-2">
+                                <p>Building the 3D model may be slow due to:</p>
+                                <ul className="list-disc pl-5 space-y-1">
+                                    {buildWarning?.warnings.map((w, i) => (
+                                        <li key={i}>{w}</li>
+                                    ))}
+                                </ul>
+                                <p>Do you want to continue?</p>
+                            </div>
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={confirmBuild}>Build Anyway</AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 }
