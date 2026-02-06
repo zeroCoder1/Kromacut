@@ -106,6 +106,56 @@ export interface ThreeDControlsStateShape {
     autoPaintFilamentSwatches?: Swatch[];
 }
 
+const PRINT_SETTINGS_STORAGE_KEY = 'kromacut:3d-print-settings';
+const DEFAULT_PRINT_SETTINGS = {
+    layerHeight: 0.12,
+    slicerFirstLayerHeight: 0.2,
+    pixelSize: 0.1,
+};
+
+type PrintSettings = {
+    layerHeight: number;
+    slicerFirstLayerHeight: number;
+    pixelSize: number;
+};
+
+const clampNumber = (value: number, min: number, max: number) =>
+    Math.max(min, Math.min(max, value));
+
+const loadPrintSettingsFromStorage = (): PrintSettings | null => {
+    if (typeof window === 'undefined') return null;
+    try {
+        const raw = window.localStorage.getItem(PRINT_SETTINGS_STORAGE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as Partial<PrintSettings>;
+        const layerHeight =
+            typeof parsed.layerHeight === 'number' && isFinite(parsed.layerHeight)
+                ? clampNumber(parsed.layerHeight, 0.01, 10)
+                : DEFAULT_PRINT_SETTINGS.layerHeight;
+        const slicerFirstLayerHeight =
+            typeof parsed.slicerFirstLayerHeight === 'number' &&
+            isFinite(parsed.slicerFirstLayerHeight)
+                ? clampNumber(parsed.slicerFirstLayerHeight, 0, 10)
+                : DEFAULT_PRINT_SETTINGS.slicerFirstLayerHeight;
+        const pixelSize =
+            typeof parsed.pixelSize === 'number' && isFinite(parsed.pixelSize)
+                ? clampNumber(parsed.pixelSize, 0.01, 10)
+                : DEFAULT_PRINT_SETTINGS.pixelSize;
+        return { layerHeight, slicerFirstLayerHeight, pixelSize };
+    } catch {
+        return null;
+    }
+};
+
+const savePrintSettingsToStorage = (settings: PrintSettings) => {
+    if (typeof window === 'undefined') return;
+    try {
+        window.localStorage.setItem(PRINT_SETTINGS_STORAGE_KEY, JSON.stringify(settings));
+    } catch {
+        // Ignore storage failures (e.g., private mode, quota exceeded).
+    }
+};
+
 interface ThreeDControlsProps {
     swatches: Swatch[] | null;
     onChange?: (state: ThreeDControlsStateShape) => void;
@@ -268,14 +318,32 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         };
     });
 
-    const [layerHeight, setLayerHeight] = useState<number>(persisted?.layerHeight ?? 0.12); // mm
+    const [initialPrintSettings] = useState(() => {
+        const stored = loadPrintSettingsFromStorage();
+        return {
+            layerHeight:
+                stored?.layerHeight ??
+                persisted?.layerHeight ??
+                DEFAULT_PRINT_SETTINGS.layerHeight,
+            slicerFirstLayerHeight:
+                stored?.slicerFirstLayerHeight ??
+                persisted?.slicerFirstLayerHeight ??
+                DEFAULT_PRINT_SETTINGS.slicerFirstLayerHeight,
+            pixelSize:
+                stored?.pixelSize ??
+                persisted?.pixelSize ??
+                DEFAULT_PRINT_SETTINGS.pixelSize,
+        };
+    });
+
+    const [layerHeight, setLayerHeight] = useState<number>(initialPrintSettings.layerHeight); // mm
     const [slicerFirstLayerHeight, setSlicerFirstLayerHeight] = useState<number>(
-        persisted?.slicerFirstLayerHeight ?? 0.2
+        initialPrintSettings.slicerFirstLayerHeight
     );
     const [colorSliceHeights, setColorSliceHeights] = useState<number[]>(
         persisted?.colorSliceHeights?.slice() ?? []
     );
-    const [pixelSize, setPixelSize] = useState<number>(persisted?.pixelSize ?? 0.1); // mm per pixel (XY plane)
+    const [pixelSize, setPixelSize] = useState<number>(initialPrintSettings.pixelSize); // mm per pixel (XY plane)
     const [filaments, setFilaments] = useState<Filament[]>(initialState.initialFilaments);
     const [paintMode, setPaintMode] = useState<'manual' | 'autopaint'>(
         persisted?.paintMode ?? 'manual'
@@ -420,6 +488,10 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         return () => clearTimeout(timer);
     }, [importFeedback]);
 
+    useEffect(() => {
+        savePrintSettingsToStorage({ layerHeight, slicerFirstLayerHeight, pixelSize });
+    }, [layerHeight, slicerFirstLayerHeight, pixelSize]);
+
     // derive non-transparent swatches once per render and memoize
     const filtered = useMemo(() => {
         return swatches ? swatches.filter((s) => s.a !== 0) : [];
@@ -535,6 +607,12 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
             next[idx] = v;
             return next;
         });
+    }, []);
+
+    const handleResetPrintSettings = useCallback(() => {
+        setLayerHeight(DEFAULT_PRINT_SETTINGS.layerHeight);
+        setSlicerFirstLayerHeight(DEFAULT_PRINT_SETTINGS.slicerFirstLayerHeight);
+        setPixelSize(DEFAULT_PRINT_SETTINGS.pixelSize);
     }, []);
 
     const handleResetHeights = useCallback(() => {
@@ -939,11 +1017,24 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
 
             {/* Printing Parameters Card */}
             <Card className="p-4 border border-border/50">
-                <div className="space-y-1">
-                    <h3 className="text-sm font-semibold text-foreground">3D Print Settings</h3>
-                    <p className="text-xs text-muted-foreground">
-                        Configure your printing parameters
-                    </p>
+                <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1">
+                        <h3 className="text-sm font-semibold text-foreground">
+                            3D Print Settings
+                        </h3>
+                        <p className="text-xs text-muted-foreground">
+                            Configure your printing parameters
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={handleResetPrintSettings}
+                        title="Reset print settings to default"
+                        aria-label="Reset print settings"
+                        className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-amber-600 hover:bg-amber-600/15 transition-colors select-none cursor-pointer"
+                    >
+                        <RotateCcw className="w-4 h-4" />
+                    </button>
                 </div>
                 <div className="h-px bg-border/50 my-4" />
                 <div className="space-y-4">
