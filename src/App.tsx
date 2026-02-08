@@ -429,34 +429,33 @@ function App(): React.ReactElement | null {
                                         adjustments={adjustments}
                                         onCropSelectionChange={setHasValidCropSelection}
                                     />
-                                    {processingActive && (
+                                    {processingActive &&
                                         (() => {
                                             const progressPct = Math.max(
                                                 0,
                                                 Math.min(100, Math.round(processingProgress * 100))
                                             );
                                             return (
-                                        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm cursor-wait">
-                                            <div className="w-[260px] rounded-xl border border-border/60 bg-background/90 shadow-lg px-4 py-3">
-                                                <div className="text-sm font-semibold text-foreground">
-                                                    {processingLabel || 'Processing...'}
+                                                <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm cursor-wait">
+                                                    <div className="w-[260px] rounded-xl border border-border/60 bg-background/90 shadow-lg px-4 py-3">
+                                                        <div className="text-sm font-semibold text-foreground">
+                                                            {processingLabel || 'Processing...'}
+                                                        </div>
+                                                        <div className="mt-1 text-xs text-muted-foreground">
+                                                            {progressPct}%
+                                                        </div>
+                                                        <div className="mt-3 h-2 w-full rounded-full bg-muted">
+                                                            <div
+                                                                className="h-2 rounded-full bg-primary transition-[width] duration-150"
+                                                                style={{
+                                                                    width: `${progressPct}%`,
+                                                                }}
+                                                            />
+                                                        </div>
+                                                    </div>
                                                 </div>
-                                                <div className="mt-1 text-xs text-muted-foreground">
-                                                    {progressPct}%
-                                                </div>
-                                                <div className="mt-3 h-2 w-full rounded-full bg-muted">
-                                                    <div
-                                                        className="h-2 rounded-full bg-primary transition-[width] duration-150"
-                                                        style={{
-                                                            width: `${progressPct}%`,
-                                                        }}
-                                                    />
-                                                </div>
-                                            </div>
-                                        </div>
                                             );
-                                        })()
-                                    )}
+                                        })()}
                                 </>
                             ) : (
                                 <ThreeDView
