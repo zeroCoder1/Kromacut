@@ -666,7 +666,6 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         setFilaments((prev) => prev.map((f) => (f.id === id ? { ...f, ...updates } : f)));
     }, []);
 
-
     // Compute auto-paint result when enabled and filaments are configured
     const autoPaintResult = useMemo<AutoPaintResult | undefined>(() => {
         if (paintMode !== 'autopaint' || filaments.length === 0 || filtered.length === 0) {
@@ -1067,12 +1066,10 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                 </TabsList>
 
                 {/* Auto-paint Tab */}
-                <TabsContent value="autopaint">
+                <TabsContent value="autopaint" forceMount className="data-[state=inactive]:hidden">
                     <Card className="p-4 border border-border/50">
                         <div className="space-y-1">
-                            <h3 className="text-sm font-semibold text-foreground">
-                                Auto-paint
-                            </h3>
+                            <h3 className="text-sm font-semibold text-foreground">Auto-paint</h3>
                             <p className="text-xs text-muted-foreground">
                                 Define filament colors and transmission distances for automatic
                                 painting
@@ -1455,7 +1452,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                 </TabsContent>
 
                 {/* Manual Tab */}
-                <TabsContent value="manual">
+                <TabsContent value="manual" forceMount className="data-[state=inactive]:hidden">
                     <Card className="p-4 border border-border/50">
                         <div className="flex justify-between items-center mb-4">
                             <div>
