@@ -57,6 +57,9 @@ export const ControlsPanel: React.FC<Props> = ({
         setLocalWeight(weight);
     }, [weight]);
 
+    const allDefault =
+        finalColors === 16 && weight === 128 && algorithm === 'kmeans' && selectedPalette === 'auto';
+
     return (
         <Card className="p-4 border border-border/50 space-y-4">
             <div>
@@ -71,9 +74,10 @@ export const ControlsPanel: React.FC<Props> = ({
                         <button
                             type="button"
                             onClick={onReset}
+                            disabled={allDefault}
                             title="Reset quantization settings to default"
                             aria-label="Reset quantization settings"
-                            className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-amber-600 hover:bg-amber-600/15 transition-colors select-none cursor-pointer"
+                            className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-amber-600 hover:bg-amber-600/15 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground select-none cursor-pointer"
                         >
                             <RotateCcw className="w-4 h-4" />
                         </button>
