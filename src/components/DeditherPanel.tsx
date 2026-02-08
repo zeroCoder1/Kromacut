@@ -16,6 +16,7 @@ export const DeditherPanel: React.FC<Props> = ({ canvasRef, onApplyResult }) => 
     const [passes, setPasses] = useState<number>(1);
     const [working, setWorking] = useState(false);
     const DEFAULT_WEIGHT = 4;
+    const DEFAULT_PASSES = 1;
 
     const handleApply = useCallback(async () => {
         if (!canvasRef.current) return;
@@ -208,9 +209,25 @@ export const DeditherPanel: React.FC<Props> = ({ canvasRef, onApplyResult }) => 
                     <Label htmlFor="passes-slider" className="font-medium">
                         Passes
                     </Label>
-                    <span className="px-2 py-1 rounded-full bg-primary/10 text-primary text-xs font-mono font-semibold">
-                        {passes}
-                    </span>
+                    <div className="flex items-center gap-2">
+                        <span className="px-2 py-1 rounded-full bg-primary/10 text-primary text-xs font-mono font-semibold">
+                            {passes}
+                        </span>
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setPasses(DEFAULT_PASSES);
+                            }}
+                            disabled={passes === DEFAULT_PASSES}
+                            title="Reset passes to default"
+                            aria-label="Reset passes"
+                            className="h-5 w-5 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-amber-600 hover:bg-amber-600/15 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground select-none cursor-pointer"
+                        >
+                            <RotateCcw className="w-3.5 h-3.5" />
+                        </button>
+                    </div>
                 </div>
                 <Slider
                     id="passes-slider"

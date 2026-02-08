@@ -108,24 +108,11 @@ export const AdjustmentsPanel: React.FC<Props> = React.memo(
 
         return (
             <Card className="p-4 border border-border/50 space-y-4">
-                <div className="flex items-center justify-between gap-2">
-                    <div>
-                        <h3 className="text-sm font-semibold text-foreground">Adjustments</h3>
-                        <p className="text-xs text-muted-foreground mt-1">
-                            Fine-tune image properties
-                        </p>
-                    </div>
-                    <Button
-                        type="button"
-                        onClick={handleBake}
-                        size="sm"
-                        className="bg-green-600 hover:bg-green-700 text-white font-semibold transition-all duration-200 shadow-md hover:shadow-lg active:scale-95 gap-1.5"
-                        title="Apply (bake) adjustments to the image"
-                        aria-label="Apply adjustments"
-                    >
-                        <Check className="w-4 h-4" />
-                        <span>Apply</span>
-                    </Button>
+                <div>
+                    <h3 className="text-sm font-semibold text-foreground">Adjustments</h3>
+                    <p className="text-xs text-muted-foreground mt-1">
+                        Fine-tune image properties
+                    </p>
                 </div>
                 <div className="h-px bg-border/50" />
                 <div className="space-y-4">
@@ -178,6 +165,17 @@ export const AdjustmentsPanel: React.FC<Props> = React.memo(
                         );
                     })}
                 </div>
+                <div className="h-px bg-border/50" />
+                <Button
+                    type="button"
+                    onClick={handleBake}
+                    className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold transition-all duration-200 shadow-md hover:shadow-lg active:scale-95 gap-1.5"
+                    title="Apply (bake) adjustments to the image"
+                    aria-label="Apply adjustments"
+                >
+                    <Check className="w-4 h-4" />
+                    <span>Apply</span>
+                </Button>
             </Card>
         );
     }
