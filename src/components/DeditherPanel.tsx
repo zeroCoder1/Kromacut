@@ -9,9 +9,16 @@ import type { CanvasPreviewHandle } from './CanvasPreview';
 interface Props {
     canvasRef: React.RefObject<CanvasPreviewHandle | null>;
     onApplyResult: (blobUrl: string) => void;
+    onWorkingChange?: (working: boolean) => void;
+    onProgress?: (value: number) => void;
 }
 
-export const DeditherPanel: React.FC<Props> = ({ canvasRef, onApplyResult }) => {
+export const DeditherPanel: React.FC<Props> = ({
+    canvasRef,
+    onApplyResult,
+    onWorkingChange,
+    onProgress,
+}) => {
     const [weight, setWeight] = useState<number>(4);
     const [passes, setPasses] = useState<number>(1);
     const [working, setWorking] = useState(false);
@@ -21,6 +28,8 @@ export const DeditherPanel: React.FC<Props> = ({ canvasRef, onApplyResult }) => 
     const handleApply = useCallback(async () => {
         if (!canvasRef.current) return;
         setWorking(true);
+        onWorkingChange?.(true);
+        onProgress?.(0.01);
         await new Promise((r) => requestAnimationFrame(r));
         try {
             // prefer adjusted image if available
@@ -33,6 +42,7 @@ export const DeditherPanel: React.FC<Props> = ({ canvasRef, onApplyResult }) => 
                 i.src = URL.createObjectURL(blob);
             });
             if (!img) return;
+            onProgress?.(0.06);
 
             const w = img.naturalWidth;
             const h = img.naturalHeight;
@@ -44,6 +54,7 @@ export const DeditherPanel: React.FC<Props> = ({ canvasRef, onApplyResult }) => 
             ctx.drawImage(img, 0, 0, w, h);
             const data = ctx.getImageData(0, 0, w, h);
             let current = new Uint8ClampedArray(data.data);
+            onProgress?.(0.1);
 
             // neighbor offsets for 3x3 window excluding center
             const neigh: Array<[number, number]> = [
@@ -60,6 +71,8 @@ export const DeditherPanel: React.FC<Props> = ({ canvasRef, onApplyResult }) => 
             const YIELD_MS = 12;
             let lastYield = performance.now();
             const totalPasses = Math.max(1, Math.min(10, Math.round(passes)));
+            const totalRows = Math.max(1, totalPasses * h);
+            let processedRows = 0;
 
             for (let pass = 0; pass < totalPasses; pass++) {
                 const out = new Uint8ClampedArray(current);
@@ -134,28 +147,36 @@ export const DeditherPanel: React.FC<Props> = ({ canvasRef, onApplyResult }) => 
                         await new Promise((r) => requestAnimationFrame(r));
                         lastYield = performance.now();
                     }
+                    processedRows++;
+                    if (y % 16 === 0) {
+                        onProgress?.(0.1 + (processedRows / totalRows) * 0.85);
+                    }
                 }
                 current = out;
                 if (performance.now() - lastYield > YIELD_MS) {
                     await new Promise((r) => requestAnimationFrame(r));
                     lastYield = performance.now();
                 }
+                onProgress?.(0.1 + (processedRows / totalRows) * 0.85);
             }
 
             const outData = new ImageData(current, w, h);
             ctx.putImageData(outData, 0, 0);
+            onProgress?.(0.95);
             const outBlob = await new Promise<Blob | null>((res) =>
                 c.toBlob((b) => res(b), 'image/png')
             );
             if (!outBlob) return;
+            onProgress?.(1);
             const url = URL.createObjectURL(outBlob);
             onApplyResult(url);
         } catch (err) {
             console.warn('Dedither failed', err);
         } finally {
             setWorking(false);
+            onWorkingChange?.(false);
         }
-    }, [canvasRef, weight, passes, onApplyResult]);
+    }, [canvasRef, weight, passes, onApplyResult, onWorkingChange, onProgress]);
 
     return (
         <Card className="p-4 border border-border/50 space-y-4">
