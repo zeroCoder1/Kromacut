@@ -96,6 +96,7 @@ function App(): React.ReactElement | null {
     const [isDedithering, setIsDedithering] = useState(false);
     const [processingLabel, setProcessingLabel] = useState<string>('');
     const [processingProgress, setProcessingProgress] = useState(0);
+    const [processingIndeterminate, setProcessingIndeterminate] = useState(false);
     const { applyQuantize } = useQuantize({
         algorithm,
         weight,
@@ -109,6 +110,15 @@ function App(): React.ReactElement | null {
         onImmediateSwatches: (colors: SwatchEntry[]) => immediateOverride(colors),
         onProgress: (value) => {
             setProcessingProgress((prev) => (value > prev ? value : prev));
+        },
+        onStage: (stage) => {
+            if (stage === 'algorithm') {
+                setProcessingIndeterminate(true);
+            } else if (stage === 'final') {
+                setProcessingIndeterminate(false);
+            } else {
+                setProcessingIndeterminate(false);
+            }
         },
     });
 
@@ -348,6 +358,7 @@ function App(): React.ReactElement | null {
                                                 if (working) {
                                                     setProcessingLabel('Dedithering...');
                                                     setProcessingProgress(0);
+                                                    setProcessingIndeterminate(false);
                                                 }
                                             }}
                                             onProgress={(value) => {
@@ -376,12 +387,14 @@ function App(): React.ReactElement | null {
                                                 setIsQuantizing(true);
                                                 setProcessingLabel('Quantizing...');
                                                 setProcessingProgress(0);
+                                                setProcessingIndeterminate(false);
                                                 await new Promise((r) => requestAnimationFrame(r));
                                                 try {
                                                     await applyQuantize(canvasPreviewRef);
                                                 } finally {
                                                     setIsQuantizing(false);
                                                     setProcessingProgress(1);
+                                                    setProcessingIndeterminate(false);
                                                 }
                                             }}
                                             disabled={!imageSrc || isCropMode}
@@ -435,6 +448,10 @@ function App(): React.ReactElement | null {
                                                 0,
                                                 Math.min(100, Math.round(processingProgress * 100))
                                             );
+                                            const showPercent = !processingIndeterminate;
+                                            const barWidth = showPercent
+                                                ? `${progressPct}%`
+                                                : '100%';
                                             return (
                                                 <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm cursor-wait">
                                                     <div className="w-[260px] rounded-xl border border-border/60 bg-background/90 shadow-lg px-4 py-3">
@@ -442,13 +459,19 @@ function App(): React.ReactElement | null {
                                                             {processingLabel || 'Processing...'}
                                                         </div>
                                                         <div className="mt-1 text-xs text-muted-foreground">
-                                                            {progressPct}%
+                                                            {showPercent
+                                                                ? `${progressPct}%`
+                                                                : 'Working...'}
                                                         </div>
                                                         <div className="mt-3 h-2 w-full rounded-full bg-muted">
                                                             <div
-                                                                className="h-2 rounded-full bg-primary transition-[width] duration-150"
+                                                                className={`h-2 rounded-full bg-primary ${
+                                                                    showPercent
+                                                                        ? ''
+                                                                        : 'animate-pulse'
+                                                                }`}
                                                                 style={{
-                                                                    width: `${progressPct}%`,
+                                                                    width: barWidth,
                                                                 }}
                                                             />
                                                         </div>
