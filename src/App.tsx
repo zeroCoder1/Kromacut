@@ -93,6 +93,9 @@ function App(): React.ReactElement | null {
     const [isCropMode, setIsCropMode] = useState(false);
     const [hasValidCropSelection, setHasValidCropSelection] = useState(false);
     const [isQuantizing, setIsQuantizing] = useState(false);
+    const [isDedithering, setIsDedithering] = useState(false);
+    const [processingLabel, setProcessingLabel] = useState<string>('');
+    const [processingProgress, setProcessingProgress] = useState(0);
     const { applyQuantize } = useQuantize({
         algorithm,
         weight,
@@ -104,6 +107,9 @@ function App(): React.ReactElement | null {
             setImage(u, push);
         },
         onImmediateSwatches: (colors: SwatchEntry[]) => immediateOverride(colors),
+        onProgress: (value) => {
+            setProcessingProgress((prev) => (value > prev ? value : prev));
+        },
     });
 
     // persistent (committed) adjustments applied on redraw. Key/value map.
@@ -218,6 +224,8 @@ function App(): React.ReactElement | null {
             applyQuantize,
             swatches,
         });
+
+    const processingActive = mode === '2d' && (isQuantizing || isDedithering);
     // Thresholds for build warnings
     const LAYER_WARNING_THRESHOLD = 64;
     const PIXEL_WARNING_THRESHOLD = 2500000;
@@ -335,6 +343,18 @@ function App(): React.ReactElement | null {
                                                 invalidate();
                                                 setImage(url, true);
                                             }}
+                                            onWorkingChange={(working) => {
+                                                setIsDedithering(working);
+                                                if (working) {
+                                                    setProcessingLabel('Dedithering...');
+                                                    setProcessingProgress(0);
+                                                }
+                                            }}
+                                            onProgress={(value) => {
+                                                setProcessingProgress((prev) =>
+                                                    value > prev ? value : prev
+                                                );
+                                            }}
                                         />
                                         <ControlsPanel
                                             // finalColors controls postprocessing result count
@@ -354,11 +374,14 @@ function App(): React.ReactElement | null {
                                             onApply={async () => {
                                                 if (isQuantizing) return;
                                                 setIsQuantizing(true);
+                                                setProcessingLabel('Quantizing...');
+                                                setProcessingProgress(0);
                                                 await new Promise((r) => requestAnimationFrame(r));
                                                 try {
                                                     await applyQuantize(canvasPreviewRef);
                                                 } finally {
                                                     setIsQuantizing(false);
+                                                    setProcessingProgress(1);
                                                 }
                                             }}
                                             disabled={!imageSrc || isCropMode}
@@ -397,14 +420,44 @@ function App(): React.ReactElement | null {
                             onDragLeave={dropzone.onDragLeave}
                         >
                             {mode === '2d' ? (
-                                <CanvasPreview
-                                    ref={canvasPreviewRef}
-                                    imageSrc={imageSrc}
-                                    isCropMode={isCropMode}
-                                    showCheckerboard={showCheckerboard}
-                                    adjustments={adjustments}
-                                    onCropSelectionChange={setHasValidCropSelection}
-                                />
+                                <>
+                                    <CanvasPreview
+                                        ref={canvasPreviewRef}
+                                        imageSrc={imageSrc}
+                                        isCropMode={isCropMode}
+                                        showCheckerboard={showCheckerboard}
+                                        adjustments={adjustments}
+                                        onCropSelectionChange={setHasValidCropSelection}
+                                    />
+                                    {processingActive && (
+                                        (() => {
+                                            const progressPct = Math.max(
+                                                0,
+                                                Math.min(100, Math.round(processingProgress * 100))
+                                            );
+                                            return (
+                                        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm cursor-wait">
+                                            <div className="w-[260px] rounded-xl border border-border/60 bg-background/90 shadow-lg px-4 py-3">
+                                                <div className="text-sm font-semibold text-foreground">
+                                                    {processingLabel || 'Processing...'}
+                                                </div>
+                                                <div className="mt-1 text-xs text-muted-foreground">
+                                                    {progressPct}%
+                                                </div>
+                                                <div className="mt-3 h-2 w-full rounded-full bg-muted">
+                                                    <div
+                                                        className="h-2 rounded-full bg-primary transition-[width] duration-150"
+                                                        style={{
+                                                            width: `${progressPct}%`,
+                                                        }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                            );
+                                        })()
+                                    )}
+                                </>
                             ) : (
                                 <ThreeDView
                                     imageSrc={imageSrc}

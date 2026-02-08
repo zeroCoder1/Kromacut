@@ -26,6 +26,7 @@ interface Params {
             isTransparent?: boolean;
         }[]
     ) => void;
+    onProgress?: (value: number) => void;
 }
 
 export function useQuantize({
@@ -36,6 +37,7 @@ export function useQuantize({
     imageSrc,
     setImage,
     onImmediateSwatches,
+    onProgress,
 }: Params) {
     const applyQuantize = async (
         canvasPreviewRef: React.RefObject<CanvasPreviewHandle | null>,
@@ -45,8 +47,10 @@ export function useQuantize({
         }
     ) => {
         if (!canvasPreviewRef.current || !imageSrc) return;
+        onProgress?.(0.01);
         const blob = await canvasPreviewRef.current.exportImageBlob();
         if (!blob) return;
+        onProgress?.(0.05);
         const img = await new Promise<HTMLImageElement | null>((resolve) => {
             const i = new Image();
             i.onload = () => resolve(i);
@@ -54,6 +58,7 @@ export function useQuantize({
             i.src = URL.createObjectURL(blob);
         });
         if (!img) return;
+        onProgress?.(0.1);
 
         const w = img.naturalWidth;
         const h = img.naturalHeight;
@@ -64,6 +69,7 @@ export function useQuantize({
         if (!ctx) return;
         ctx.drawImage(img, 0, 0, w, h);
         const data = ctx.getImageData(0, 0, w, h);
+        onProgress?.(0.15);
         // helper to finalize alpha after postprocessing
         const finalizeAlpha = (imgd: ImageData) => {
             // Any partially transparent (0<alpha<255) pixel becomes fully opaque
@@ -80,9 +86,11 @@ export function useQuantize({
         else if (algorithm === 'none') {
             // no algorithm pass, leave data as-is for postprocessing
         } else posterizeImageData(data, weight);
+        onProgress?.(0.6);
 
         // put algorithm result (or original) into canvas
         ctx.putImageData(data, 0, 0);
+        onProgress?.(0.68);
         // postprocessing: if an override palette is provided use it; otherwise
         // fall back to selectedPalette (named palettes) or auto (enforce finalColors)
         const overridePalette = options?.overridePalette;
@@ -101,9 +109,11 @@ export function useQuantize({
             enforcePaletteSize(data, overrideFinal ?? finalColors);
             ctx.putImageData(data, 0, 0);
         }
+        onProgress?.(0.78);
         // Normalize any partial alpha AFTER post processing so uniqueness isn't skewed
         finalizeAlpha(data);
         ctx.putImageData(data, 0, 0);
+        onProgress?.(0.82);
         // diagnostic: log final counts and what was applied
 
         // immediate swatches
@@ -112,6 +122,7 @@ export function useQuantize({
             let transparentCount = 0;
             const dd = data.data;
             const SWATCH_CAP = 2 ** 14;
+            const total = dd.length / 4;
             for (let i = 0; i < dd.length; i += 4) {
                 if (dd[i + 3] === 0) {
                     transparentCount++;
@@ -119,6 +130,9 @@ export function useQuantize({
                 } // track transparent separately
                 const k = (dd[i] << 16) | (dd[i + 1] << 8) | dd[i + 2];
                 cmap.set(k, (cmap.get(k) || 0) + 1);
+                if ((i / 4) % 50000 === 0) {
+                    onProgress?.(0.82 + (i / 4 / Math.max(1, total)) * 0.12);
+                }
             }
             const topLocal = Array.from(cmap.entries())
                 .sort((a, b) => b[1] - a[1])
@@ -154,10 +168,12 @@ export function useQuantize({
         } catch (err) {
             console.warn('immediate swatches failed', err);
         }
+        onProgress?.(0.95);
         const outBlob = await new Promise<Blob | null>((res) =>
             c.toBlob((b) => res(b), 'image/png')
         );
         if (!outBlob) return;
+        onProgress?.(1);
         const url = URL.createObjectURL(outBlob);
         setImage(url, true);
     };
