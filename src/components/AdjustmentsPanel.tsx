@@ -97,6 +97,19 @@ export const AdjustmentsPanel: React.FC<Props> = React.memo(
             [onCommit]
         );
 
+        const handleResetAll = useCallback(() => {
+            const defaults: Record<string, number> = {};
+            defs.forEach((d) => {
+                defaults[d.key] = d.default;
+            });
+            setValues(defaults);
+            dirtyRef.current = true;
+            draggingRef.current = false;
+            onCommit?.(defaults);
+        }, [defs, onCommit]);
+
+        const allDefault = defs.every((d) => values[d.key] === d.default);
+
         const handleBake = useCallback(() => {
             // Ensure any in-progress drag is flushed before bake
             if (dirtyRef.current) {
@@ -108,9 +121,21 @@ export const AdjustmentsPanel: React.FC<Props> = React.memo(
 
         return (
             <Card className="p-4 border border-border/50 space-y-4">
-                <div>
-                    <h3 className="text-sm font-semibold text-foreground">Adjustments</h3>
-                    <p className="text-xs text-muted-foreground mt-1">Fine-tune image properties</p>
+                <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1">
+                        <h3 className="text-sm font-semibold text-foreground">Adjustments</h3>
+                        <p className="text-xs text-muted-foreground">Fine-tune image properties</p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={handleResetAll}
+                        disabled={allDefault}
+                        title="Reset all adjustments to default"
+                        aria-label="Reset all adjustments"
+                        className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-amber-600 hover:bg-amber-600/15 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground select-none cursor-pointer"
+                    >
+                        <RotateCcw className="w-4 h-4" />
+                    </button>
                 </div>
                 <div className="h-px bg-border/50" />
                 <div className="space-y-4">
