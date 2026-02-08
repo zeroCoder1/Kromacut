@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button } from '@/components/ui/button';
-import { Image, Github, Heart, Moon, Sun } from 'lucide-react';
+import { Image, Github, Heart, Moon, Sun, MessageCircle } from 'lucide-react';
 import logo from '../assets/logo.png';
 
 interface Props {
@@ -42,6 +42,20 @@ export const Header: React.FC<Props> = ({ onLoadTest }) => {
                 >
                     <Image className="w-4 h-4" />
                     <span>Load TD Test</span>
+                </Button>
+                <Button
+                    size="sm"
+                    asChild
+                    className="bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-600 hover:to-blue-700 text-white font-semibold transition-all duration-200 shadow-md hover:shadow-lg hover:scale-105 active:scale-95 gap-1.5"
+                >
+                    <a
+                        href="https://discord.gg/nU63sFMcnX"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                    >
+                        <MessageCircle className="w-4 h-4" />
+                        <span>Discord</span>
+                    </a>
                 </Button>
                 <Button
                     size="sm"

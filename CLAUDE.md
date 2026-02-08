@@ -10,6 +10,8 @@ Key domain concepts:
 - **Transmission Distance (TD):** Models how light transmits through thin filament layers; used by the auto-paint algorithm to simulate multi-filament lithophane effects via Beer-Lambert law optical simulation.
 - **Greedy meshing:** Maximal rectangle algorithm generates optimized 3D geometry with separate wall generation to prevent T-junctions.
 - **Quantization algorithms:** Posterize, median-cut, K-means, octree, and Wu methods for color reduction.
+- **Dedithering:** Median-filter-like smoothing pass that replaces isolated dithered pixels with their most frequent neighbor color; runs as a pre-quantization step.
+- **Filament profiles:** Reusable auto-paint filament configurations persisted to localStorage, importable/exportable as `.kapp` JSON files.
 
 ## Commands
 
@@ -26,7 +28,7 @@ No test framework is configured.
 
 ## Architecture
 
-**Stack:** React 19 + TypeScript + Vite + Three.js + Tailwind CSS v4 + Shadcn/Radix UI
+**Stack:** React 19 + TypeScript + Vite 7 + Three.js + Tailwind CSS v4 + Shadcn/Radix UI
 
 **Path alias:** `@/*` maps to `./src/*`
 
@@ -41,6 +43,7 @@ No test framework is configured.
   - `useAppHandlers` — STL/3MF export orchestration, image download
   - `useImageHistory` — Undo/redo stack
   - `useDropzone` — Drag-and-drop file upload
+  - `useHorizontalSplit` — Draggable horizontal splitter state via CSS custom properties
 - `src/lib/` — Pure algorithmic logic (no React dependencies):
   - `algorithms.ts` — All quantization algorithms (K-means, median-cut, octree, Wu)
   - `meshing.ts` — Greedy mesh generation for 3D geometry
@@ -49,6 +52,11 @@ No test framework is configured.
   - `export3mf.ts` — 3MF multi-material export (uses JSZip)
   - `applyAdjustments.ts` — Image adjustment filters (exposure, contrast, saturation, etc.)
   - `color.ts` — RGB/HSL/Lab color space conversions
+  - `profileManager.ts` — CRUD + localStorage persistence for auto-paint filament profiles; import/export as `.kapp` files
+  - `slicerDefaults.ts` — Default slicer metadata (layer height, infill, nozzle diameter) embedded in 3MF exports
+  - `logger.ts` — Environment-aware logger; `debug` is a no-op in production
+  - `compose-refs.ts` — Utility to compose multiple React refs into a single callback ref
+  - `utils.ts` — Shadcn `cn()` helper (clsx + tailwind-merge)
 - `src/data/palettes.ts` — Predefined color palettes
 
 ### Data flow
@@ -57,12 +65,22 @@ State lives in `App.tsx` and flows down through props. The pipeline is:
 
 1. Image upload → `useDropzone` / `useImageHistory`
 2. Adjustments applied → `applyAdjustments.ts` on offscreen canvases
-3. Quantization → `useQuantize` dispatches to algorithm in `algorithms.ts`
-4. Swatch management → `useSwatches` computes histogram, user reorders via dnd-kit
-5. 3D preview → `useThreeScene` builds geometry via `meshing.ts`, renders with Three.js
-6. Export → `useAppHandlers` calls `exportStl.ts` or `export3mf.ts`
+3. Dedithering (optional) → `DeditherPanel` runs a smoothing pass on quantized output
+4. Quantization → `useQuantize` dispatches to algorithm in `algorithms.ts`
+5. Swatch management → `useSwatches` computes histogram, user reorders via dnd-kit
+6. 3D preview → `useThreeScene` builds geometry via `meshing.ts`, renders with Three.js
+7. Export → `useAppHandlers` calls `exportStl.ts` or `export3mf.ts`
 
 Canvas rendering uses dual offscreen canvases (`originalCanvasRef`, `processedCanvasRef`) for non-destructive adjustment processing. `CanvasPreview` and the Three.js scene expose imperative handles via `useImperativeHandle`.
+
+### Key UI patterns
+
+- **Processing overlay:** Unified progress indicator (`processingActive`, `processingLabel`, `processingProgress`) gates on quantization or dedithering and displays a progress bar.
+- **`adjustmentsEpoch` counter:** Forces `AdjustmentsPanel` to remount and reset sliders after baking adjustments into the image.
+- **Build warning dialog:** An `AlertDialog` warns before building 3D geometry when layer count exceeds 64 or pixel count exceeds 2.5M.
+- **`ResizableSplitter` layout:** The main 2-pane layout uses a percentage-based draggable splitter (30% default, 20–50% range).
+- **Auto-paint persistence:** `threeDState` (filaments, `paintMode: 'manual' | 'autopaint'`) is persisted to localStorage under `kromacut.autopaint.v1` with legacy migration.
+- **3MF export enrichment:** Exports embed `layerHeight`, `firstLayerHeight`, auto-paint filament colors, and slicer defaults from `slicerDefaults.ts`.
 
 ### Rendering details
 
@@ -77,3 +95,4 @@ Canvas rendering uses dual offscreen canvases (`originalCanvasRef`, `processedCa
 - **Naming:** PascalCase for components/types, camelCase for hooks/functions, UPPER_SNAKE_CASE for constants.
 - **Hooks-first architecture:** No class components. Business logic extracted into custom hooks. Event handlers stabilized with `useCallback`.
 - **TypeScript strict mode** enabled. Explicit interfaces for component props and shared types.
+
