@@ -34,7 +34,13 @@ No test framework is configured.
 
 ### Code organization
 
+- `src/types/index.ts` — Shared TypeScript types (`Swatch`, `Filament`, `ThreeDControlsStateShape`). Canonical location to avoid circular imports between lib modules and components.
 - `src/components/` — React UI components. `App.tsx` is the root, holds top-level state.
+  - `ThreeDControls.tsx` — Orchestrator for 3D print settings; delegates to extracted sub-components and hooks.
+  - `FilamentRow.tsx` — Individual filament row with color picker, TD input, and auto-estimate.
+  - `PrintSettingsCard.tsx` — Print settings Card (pixel size, layer height, first layer height).
+  - `PrintInstructions.tsx` — Print instructions Card (recommended settings, swap plan, copy button).
+  - `AutoPaintTab.tsx` — Auto-paint tab content (profiles, filament list, max height, transition zones).
 - `src/components/ui/` — Shadcn/Radix primitive components (buttons, sliders, popovers, etc.).
 - `src/hooks/` — Custom hooks that encapsulate business logic and state management:
   - `useSwatches` — Async image histogram computation with cancellation
@@ -44,6 +50,12 @@ No test framework is configured.
   - `useImageHistory` — Undo/redo stack
   - `useDropzone` — Drag-and-drop file upload
   - `useHorizontalSplit` — Draggable horizontal splitter state via CSS custom properties
+  - `useFilaments` — Filament CRUD state (add, remove, update)
+  - `useProfileManager` — Profile save/load/delete/import/export for auto-paint filament configurations
+  - `useColorSlicing` — Color order and per-color slice height reconciliation with layer-height snapping
+  - `useSwapPlan` — Swap plan computation (manual and auto-paint modes) and clipboard copy
+  - `useProcessingState` — Processing overlay state (quantizing, dedithering, progress, label)
+  - `useBuildWarning` — Build warning logic, image dimension tracking, 3D state and rebuild signal
 - `src/lib/` — Pure algorithmic logic (no React dependencies):
   - `algorithms.ts` — All quantization algorithms (K-means, median-cut, octree, Wu)
   - `meshing.ts` — Greedy mesh generation for 3D geometry
@@ -52,7 +64,9 @@ No test framework is configured.
   - `export3mf.ts` — 3MF multi-material export (uses JSZip)
   - `applyAdjustments.ts` — Image adjustment filters (exposure, contrast, saturation, etc.)
   - `color.ts` — RGB/HSL/Lab color space conversions
+  - `colorUtils.ts` — Shared color utilities: `hexLuminance()` and `estimateTDFromColor()`
   - `profileManager.ts` — CRUD + localStorage persistence for auto-paint filament profiles; import/export as `.kapp` files
+  - `printSettingsStorage.ts` — Print settings localStorage persistence (layer height, first layer height, pixel size)
   - `slicerDefaults.ts` — Default slicer metadata (layer height, infill, nozzle diameter) embedded in 3MF exports
   - `logger.ts` — Environment-aware logger; `debug` is a no-op in production
   - `compose-refs.ts` — Utility to compose multiple React refs into a single callback ref
@@ -75,9 +89,9 @@ Canvas rendering uses dual offscreen canvases (`originalCanvasRef`, `processedCa
 
 ### Key UI patterns
 
-- **Processing overlay:** Unified progress indicator (`processingActive`, `processingLabel`, `processingProgress`) gates on quantization or dedithering and displays a progress bar.
+- **Processing overlay:** Managed by `useProcessingState` hook; unified progress indicator (`processingActive`, `processingLabel`, `processingProgress`) gates on quantization or dedithering and displays a progress bar.
 - **`adjustmentsEpoch` counter:** Forces `AdjustmentsPanel` to remount and reset sliders after baking adjustments into the image.
-- **Build warning dialog:** An `AlertDialog` warns before building 3D geometry when layer count exceeds 64 or pixel count exceeds 2.5M.
+- **Build warning dialog:** Managed by `useBuildWarning` hook; an `AlertDialog` warns before building 3D geometry when layer count exceeds 64 or pixel count exceeds 2.5M.
 - **`ResizableSplitter` layout:** The main 2-pane layout uses a percentage-based draggable splitter (30% default, 20–50% range).
 - **Auto-paint persistence:** `threeDState` (filaments, `paintMode: 'manual' | 'autopaint'`) is persisted to localStorage under `kromacut.autopaint.v1` with legacy migration.
 - **3MF export enrichment:** Exports embed `layerHeight`, `firstLayerHeight`, auto-paint filament colors, and slicer defaults from `slicerDefaults.ts`.
