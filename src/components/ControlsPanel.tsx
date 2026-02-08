@@ -198,7 +198,7 @@ export const ControlsPanel: React.FC<Props> = ({
                 ) : (
                     <Check className="w-4 h-4" />
                 )}
-                <span>{applying ? 'Applying...' : 'Apply Quantization'}</span>
+                <span>{applying ? 'Applying...' : 'Apply'}</span>
             </Button>
         </Card>
     );
