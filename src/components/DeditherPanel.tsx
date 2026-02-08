@@ -178,13 +178,30 @@ export const DeditherPanel: React.FC<Props> = ({
         }
     }, [canvasRef, weight, passes, onApplyResult, onWorkingChange, onProgress]);
 
+    const allDefault = weight === DEFAULT_WEIGHT && passes === DEFAULT_PASSES;
+
+    const handleResetAll = useCallback(() => {
+        setWeight(DEFAULT_WEIGHT);
+        setPasses(DEFAULT_PASSES);
+    }, []);
+
     return (
         <Card className="p-4 border border-border/50 space-y-4">
-            <div className="flex justify-between items-center">
-                <div>
+            <div className="flex items-start justify-between gap-2">
+                <div className="space-y-1">
                     <h3 className="text-sm font-semibold text-foreground">Dedither</h3>
-                    <p className="text-xs text-muted-foreground mt-1">Smooth dithered patterns</p>
+                    <p className="text-xs text-muted-foreground">Smooth dithered patterns</p>
                 </div>
+                <button
+                    type="button"
+                    onClick={handleResetAll}
+                    disabled={allDefault}
+                    title="Reset all dedither settings to default"
+                    aria-label="Reset all dedither settings"
+                    className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-amber-600 hover:bg-amber-600/15 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground select-none cursor-pointer"
+                >
+                    <RotateCcw className="w-4 h-4" />
+                </button>
             </div>
 
             <div className="h-px bg-border/50" />

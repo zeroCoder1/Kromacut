@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { NumberInput } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
-import { Check, Loader } from 'lucide-react';
+import { Check, Loader, RotateCcw } from 'lucide-react';
 import {
     Select,
     SelectContent,
@@ -26,6 +26,7 @@ interface Props {
     selectedPalette: string;
     onPaletteSelect: (id: string, size: number) => void;
     applying?: boolean;
+    onReset?: () => void;
 }
 
 export const ControlsPanel: React.FC<Props> = ({
@@ -41,6 +42,7 @@ export const ControlsPanel: React.FC<Props> = ({
     selectedPalette,
     onPaletteSelect,
     applying = false,
+    onReset,
 }) => {
     // Local state for relaxed typing
     const [localColors, setLocalColors] = useState(finalColors);
@@ -58,11 +60,24 @@ export const ControlsPanel: React.FC<Props> = ({
     return (
         <Card className="p-4 border border-border/50 space-y-4">
             <div>
-                <div>
-                    <h3 className="text-sm font-semibold text-foreground">Quantization Settings</h3>
-                    <p className="text-xs text-muted-foreground mt-1">
-                        Configure palette and reduce colors
-                    </p>
+                <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1">
+                        <h3 className="text-sm font-semibold text-foreground">Quantization Settings</h3>
+                        <p className="text-xs text-muted-foreground">
+                            Configure palette and reduce colors
+                        </p>
+                    </div>
+                    {onReset && (
+                        <button
+                            type="button"
+                            onClick={onReset}
+                            title="Reset quantization settings to default"
+                            aria-label="Reset quantization settings"
+                            className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-amber-600 hover:bg-amber-600/15 transition-colors select-none cursor-pointer"
+                        >
+                            <RotateCcw className="w-4 h-4" />
+                        </button>
+                    )}
                 </div>
                 <div className="h-px bg-border/50 my-4" />
                 <div className="space-y-4">
