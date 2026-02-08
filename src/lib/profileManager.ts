@@ -1,4 +1,4 @@
-import type { Filament } from '@/components/ThreeDControls';
+import type { Filament } from '@/types';
 
 export interface AutoPaintProfile {
     id: string;
@@ -22,9 +22,7 @@ export function loadProfiles(): AutoPaintProfile[] {
         if (!Array.isArray(parsed)) return [];
         return parsed.filter(
             (p) =>
-                typeof p.id === 'string' &&
-                typeof p.name === 'string' &&
-                Array.isArray(p.filaments)
+                typeof p.id === 'string' && typeof p.name === 'string' && Array.isArray(p.filaments)
         );
     } catch {
         return [];
@@ -138,9 +136,7 @@ export function importProfiles(
 
         const validFilaments = raw.filaments.filter(
             (f) =>
-                typeof f.id === 'string' &&
-                typeof f.color === 'string' &&
-                typeof f.td === 'number'
+                typeof f.id === 'string' && typeof f.color === 'string' && typeof f.td === 'number'
         );
 
         const now = Date.now();
@@ -163,7 +159,9 @@ export function importProfiles(
         }
 
         // 2. Content match (same filaments) → skip
-        const contentMatch = result.profiles.find((p) => filamentsEqual(p.filaments, validFilaments));
+        const contentMatch = result.profiles.find((p) =>
+            filamentsEqual(p.filaments, validFilaments)
+        );
         if (contentMatch) {
             result.skipped.push(`${profile.name} (matches "${contentMatch.name}")`);
             continue;

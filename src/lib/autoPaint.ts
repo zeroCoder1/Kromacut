@@ -12,7 +12,7 @@
  * 4. LUMINANCE MAPPING: Image pixel brightness maps to position within zones.
  */
 
-import type { Filament } from '../components/ThreeDControls';
+import type { Filament } from '../types';
 
 /** RGB color representation (0-255 range) */
 export interface RGB {

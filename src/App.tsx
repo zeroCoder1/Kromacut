@@ -1,6 +1,6 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import ThreeDControls from './components/ThreeDControls';
-import type { ThreeDControlsStateShape } from './components/ThreeDControls';
+import type { ThreeDControlsStateShape } from './types';
 import ThreeDView from './components/ThreeDView';
 import logo from './assets/logo.png';
 import tdTestImg from './assets/tdTest.png';
@@ -22,6 +22,8 @@ import { useDropzone } from './hooks/useDropzone';
 import { exportObjectToStlBlob } from './lib/exportStl';
 import { exportObjectTo3MFBlob } from './lib/export3mf';
 import { useAppHandlers } from './hooks/useAppHandlers';
+import { useProcessingState } from './hooks/useProcessingState';
+import { useBuildWarning } from './hooks/useBuildWarning';
 import ResizableSplitter from './components/ResizableSplitter';
 import { ControlsPanel } from './components/ControlsPanel';
 import {
@@ -92,11 +94,18 @@ function App(): React.ReactElement | null {
     const [showCheckerboard, setShowCheckerboard] = useState<boolean>(false);
     const [isCropMode, setIsCropMode] = useState(false);
     const [hasValidCropSelection, setHasValidCropSelection] = useState(false);
-    const [isQuantizing, setIsQuantizing] = useState(false);
-    const [isDedithering, setIsDedithering] = useState(false);
-    const [processingLabel, setProcessingLabel] = useState<string>('');
-    const [processingProgress, setProcessingProgress] = useState(0);
-    const [processingIndeterminate, setProcessingIndeterminate] = useState(false);
+    const {
+        isQuantizing,
+        setIsQuantizing,
+        isDedithering,
+        setIsDedithering,
+        processingLabel,
+        setProcessingLabel,
+        processingProgress,
+        setProcessingProgress,
+        processingIndeterminate,
+        setProcessingIndeterminate,
+    } = useProcessingState();
     const { applyQuantize } = useQuantize({
         algorithm,
         weight,
@@ -131,29 +140,33 @@ function App(): React.ReactElement | null {
     const [exportingSTL, setExportingSTL] = useState(false);
     const [exportProgress, setExportProgress] = useState(0); // 0..1
     // 3D printing shared state
-    const [threeDState, setThreeDState] = useState<ThreeDControlsStateShape>(() => {
+    const {
+        threeDState,
+        setThreeDState,
+        threeDBuildSignal,
+        buildWarning,
+        handleThreeDStateChange,
+        confirmBuild,
+        cancelBuild,
+    } = useBuildWarning({ imageSrc });
+
+    // Hydrate threeDState once with persisted autopaint data
+    const [autopaintHydrated] = useState(() => {
         const persisted = loadAutoPaintPersisted();
-        return {
-            layerHeight: 0.12,
-            slicerFirstLayerHeight: 0.2,
-            colorSliceHeights: [],
-            colorOrder: [],
-            filteredSwatches: [],
-            pixelSize: 0.1,
-            filaments: persisted?.filaments ?? [],
-            paintMode: persisted?.paintMode ?? 'manual',
-        };
+        return persisted;
     });
-    // Signal to force a rebuild of the 3D view when incremented
-    const [threeDBuildSignal, setThreeDBuildSignal] = useState(0);
+    useEffect(() => {
+        if (autopaintHydrated) {
+            setThreeDState((prev) => ({
+                ...prev,
+                filaments: autopaintHydrated.filaments ?? prev.filaments,
+                paintMode: autopaintHydrated.paintMode ?? prev.paintMode,
+            }));
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     const prevModeRef = useRef<typeof mode>(mode);
-    // Track image dimensions for build warnings
-    const [imageDimensions, setImageDimensions] = useState<{ w: number; h: number } | null>(null);
-    // Warning dialog state
-    const [buildWarning, setBuildWarning] = useState<{
-        warnings: string[];
-        pendingState: ThreeDControlsStateShape;
-    } | null>(null);
 
     useEffect(() => {
         saveAutoPaintPersisted({
@@ -171,18 +184,6 @@ function App(): React.ReactElement | null {
     // redraw when image changes
     useEffect(() => {
         canvasPreviewRef.current?.redraw();
-    }, [imageSrc]);
-
-    // Track image dimensions for build warning checks
-    useEffect(() => {
-        if (!imageSrc) {
-            setImageDimensions(null);
-            return;
-        }
-        const img = new Image();
-        img.onload = () => setImageDimensions({ w: img.naturalWidth, h: img.naturalHeight });
-        img.onerror = () => setImageDimensions(null);
-        img.src = imageSrc;
     }, [imageSrc]);
 
     const handleFiles = (file?: File) => {
@@ -236,61 +237,6 @@ function App(): React.ReactElement | null {
         });
 
     const processingActive = mode === '2d' && (isQuantizing || isDedithering);
-    // Thresholds for build warnings
-    const LAYER_WARNING_THRESHOLD = 64;
-    const PIXEL_WARNING_THRESHOLD = 2500000;
-
-    // Apply state without warning (used after user confirms, or when no warning needed)
-    const applyThreeDState = useCallback((s: ThreeDControlsStateShape) => {
-        setThreeDState(s);
-        // Always bump the rebuild signal so ThreeDView is forced to build,
-        // even if the serialized paramsKey happens to match a previous build.
-        setThreeDBuildSignal((n) => n + 1);
-    }, []);
-
-    // Stable handler that checks for warnings before applying
-    const handleThreeDStateChange = useCallback(
-        (s: ThreeDControlsStateShape) => {
-            const warnings: string[] = [];
-
-            // Check layer count (each entry in colorOrder = one greedy mesh pass)
-            const layerCount = s.colorOrder?.length ?? 0;
-            if (layerCount > LAYER_WARNING_THRESHOLD) {
-                warnings.push(
-                    `The model will have ${layerCount} layers to build. Consider reducing colors in 2D mode first for better performance.`
-                );
-            }
-
-            // Check image resolution
-            if (imageDimensions) {
-                const totalPixels = imageDimensions.w * imageDimensions.h;
-                if (totalPixels > PIXEL_WARNING_THRESHOLD) {
-                    warnings.push(
-                        `The image resolution is ${imageDimensions.w}\u00D7${imageDimensions.h} (${(totalPixels / 1000).toFixed(0)}k pixels). Large images may take a long time to build and use significant memory.`
-                    );
-                }
-            }
-
-            if (warnings.length > 0) {
-                setBuildWarning({ warnings, pendingState: s });
-            } else {
-                applyThreeDState(s);
-            }
-        },
-        [imageDimensions, applyThreeDState]
-    );
-
-    // Confirm build despite warnings
-    const confirmBuild = useCallback(() => {
-        if (buildWarning) {
-            applyThreeDState(buildWarning.pendingState);
-            setBuildWarning(null);
-        }
-    }, [buildWarning, applyThreeDState]);
-
-    const cancelBuild = useCallback(() => {
-        setBuildWarning(null);
-    }, []);
 
     return (
         <div className="box-border text-inherit font-sans flex flex-col flex-1 min-w-0 max-w-full min-h-0 h-screen w-full">
