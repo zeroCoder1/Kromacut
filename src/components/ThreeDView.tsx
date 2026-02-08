@@ -85,7 +85,7 @@ export default function ThreeDView({
         height: number;
         depth: number;
     } | null>(null);
-    const { cameraRef, controlsRef, modelGroupRef, materialRef } = useThreeScene(
+    const { cameraRef, controlsRef, modelGroupRef, materialRef, requestRender } = useThreeScene(
         mountRef,
         setIsBuilding
     );
@@ -343,6 +343,14 @@ export default function ThreeDView({
                         cumulativeHeights[pos] = running;
                     });
 
+                    const layerIndexBySwatch = new Int32Array(swatches.length);
+                    layerIndexBySwatch.fill(-1);
+                    colorOrder.forEach((swatchIdx, pos) => {
+                        if (swatchIdx >= 0 && swatchIdx < layerIndexBySwatch.length) {
+                            layerIndexBySwatch[swatchIdx] = pos;
+                        }
+                    });
+
                     // Iterate each color layer and build a mesh
                     for (let i = 0; i < colorOrder.length; i++) {
                         if (token !== buildTokenRef.current) return;
@@ -384,7 +392,7 @@ export default function ThreeDView({
                                         // swatches are mapped to order by colorOrder array
                                         // colorOrder[pos] = sIdx
                                         // so we find pos where colorOrder[pos] == sIdx
-                                        const layerPos = colorOrder.indexOf(sIdx);
+                                        const layerPos = layerIndexBySwatch[sIdx];
                                         if (layerPos >= i) {
                                             // Flip Y axis: Image Y (0=top) -> Grid Y (0=bottom)
                                             // We want Image Top (0) to be at Grid High Y (boxH-1) => 3D High Y
@@ -486,6 +494,8 @@ export default function ThreeDView({
                 } catch {
                     /* ignore */
                 }
+
+                requestRender();
             };
 
             (async () => {
@@ -568,6 +578,7 @@ export default function ThreeDView({
         controlsRef,
         materialRef,
         modelGroupRef,
+        requestRender,
     ]);
 
     return (

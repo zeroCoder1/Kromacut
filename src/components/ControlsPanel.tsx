@@ -3,7 +3,7 @@ import { Button } from '@/components/ui/button';
 import { NumberInput } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
-import { Check } from 'lucide-react';
+import { Check, Loader } from 'lucide-react';
 import {
     Select,
     SelectContent,
@@ -20,11 +20,12 @@ interface Props {
     onWeightChange: (n: number) => void;
     algorithm: string;
     setAlgorithm: (a: string) => void;
-    onApply: () => void;
+    onApply: () => Promise<void> | void;
     disabled: boolean;
     weightDisabled?: boolean;
     selectedPalette: string;
     onPaletteSelect: (id: string, size: number) => void;
+    applying?: boolean;
 }
 
 export const ControlsPanel: React.FC<Props> = ({
@@ -39,6 +40,7 @@ export const ControlsPanel: React.FC<Props> = ({
     weightDisabled = false,
     selectedPalette,
     onPaletteSelect,
+    applying = false,
 }) => {
     // Local state for relaxed typing
     const [localColors, setLocalColors] = useState(finalColors);
@@ -188,11 +190,15 @@ export const ControlsPanel: React.FC<Props> = ({
             </div>
             <Button
                 onClick={onApply}
-                disabled={disabled}
+                disabled={disabled || applying}
                 className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold disabled:bg-green-600/50 disabled:cursor-not-allowed transition-all duration-200 shadow-md hover:shadow-lg active:scale-95 gap-1.5"
             >
-                <Check className="w-4 h-4" />
-                <span>Apply Quantization</span>
+                {applying ? (
+                    <Loader className="w-4 h-4 animate-spin" />
+                ) : (
+                    <Check className="w-4 h-4" />
+                )}
+                <span>{applying ? 'Applying...' : 'Apply Quantization'}</span>
             </Button>
         </Card>
     );

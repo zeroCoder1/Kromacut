@@ -92,6 +92,7 @@ function App(): React.ReactElement | null {
     const [showCheckerboard, setShowCheckerboard] = useState<boolean>(false);
     const [isCropMode, setIsCropMode] = useState(false);
     const [hasValidCropSelection, setHasValidCropSelection] = useState(false);
+    const [isQuantizing, setIsQuantizing] = useState(false);
     const { applyQuantize } = useQuantize({
         algorithm,
         weight,
@@ -350,8 +351,18 @@ function App(): React.ReactElement | null {
                                             }}
                                             algorithm={algorithm}
                                             setAlgorithm={setAlgorithm}
-                                            onApply={() => applyQuantize(canvasPreviewRef)}
+                                            onApply={async () => {
+                                                if (isQuantizing) return;
+                                                setIsQuantizing(true);
+                                                await new Promise((r) => requestAnimationFrame(r));
+                                                try {
+                                                    await applyQuantize(canvasPreviewRef);
+                                                } finally {
+                                                    setIsQuantizing(false);
+                                                }
+                                            }}
                                             disabled={!imageSrc || isCropMode}
+                                            applying={isQuantizing}
                                             weightDisabled={algorithm === 'none'}
                                             selectedPalette={selectedPalette}
                                             onPaletteSelect={(id, size) => {

@@ -14,6 +14,8 @@ export function useThreeScene(
     const modelGroupRef = useRef<THREE.Group | null>(null);
     const materialRef = useRef<THREE.MeshStandardMaterial | null>(null);
 
+    const requestRenderRef = useRef<(() => void) | null>(null);
+
     useEffect(() => {
         const el = mountRef.current;
         if (!el) return;
@@ -75,6 +77,13 @@ export function useThreeScene(
             /* no-op */
         }
 
+        const requestRender = () => {
+            if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return;
+            if (controlsRef.current) controlsRef.current.update();
+            rendererRef.current.render(sceneRef.current, cameraRef.current);
+        };
+        requestRenderRef.current = requestRender;
+
         const resize = () => {
             if (!el || !cameraRef.current || !rendererRef.current) return;
             const w = el.clientWidth;
@@ -82,6 +91,7 @@ export function useThreeScene(
             rendererRef.current.setSize(w, h);
             cameraRef.current!.aspect = w / h;
             cameraRef.current!.updateProjectionMatrix();
+            requestRender();
         };
         const ro = new ResizeObserver(resize);
         ro.observe(el);
@@ -92,6 +102,7 @@ export function useThreeScene(
             if (sceneRef.current) {
                 sceneRef.current.background = new THREE.Color(isDarkMode ? 0x0b0c0d : 0xffffff);
             }
+            requestRender();
         };
 
         const themeObserver = new MutationObserver(() => {
@@ -103,7 +114,7 @@ export function useThreeScene(
         });
 
         const animate = () => {
-            controls.update();
+            if (controlsRef.current) controlsRef.current.update();
             renderer.render(scene, camera);
             rafRef.current = requestAnimationFrame(animate);
         };
@@ -156,6 +167,7 @@ export function useThreeScene(
         controlsRef,
         modelGroupRef,
         materialRef,
+        requestRender: () => requestRenderRef.current?.(),
     } as const;
 }
 

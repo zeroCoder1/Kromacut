@@ -5,6 +5,7 @@ import React, {
     useState,
     forwardRef,
     useCallback,
+    useMemo,
 } from 'react';
 import { applyAdjustments, isAllDefault } from '../lib/applyAdjustments';
 
@@ -64,6 +65,15 @@ const CanvasPreview = forwardRef<CanvasPreviewHandle, Props>(
         const processedCanvasRef = useRef<HTMLCanvasElement | null>(null);
         const lastAdjSigRef = useRef<string>('');
 
+        const hasAdjustments = useMemo(
+            () => !!adjustments && !isAllDefault(adjustments),
+            [adjustments]
+        );
+        const adjustmentsSig = useMemo(
+            () => (hasAdjustments && adjustments ? JSON.stringify(adjustments) : ''),
+            [adjustments, hasAdjustments]
+        );
+
         const drawToCanvas = useCallback(() => {
             const canvas = canvasRef.current;
             const container = previewContainerRef.current;
@@ -112,8 +122,8 @@ const CanvasPreview = forwardRef<CanvasPreviewHandle, Props>(
             ctx.imageSmoothingEnabled = false;
             // imageSmoothingQuality is not relevant when smoothing is disabled
             const original = originalCanvasRef.current;
-            if (adjustments && !isAllDefault(adjustments)) {
-                const sig = JSON.stringify(adjustments);
+            if (hasAdjustments) {
+                const sig = adjustmentsSig;
                 // Recompute processed canvas only if signature changed or missing.
                 if (sig !== lastAdjSigRef.current) {
                     try {
@@ -139,7 +149,7 @@ const CanvasPreview = forwardRef<CanvasPreviewHandle, Props>(
                         }
                         if (srcCtx) {
                             const imgData = srcCtx.getImageData(0, 0, iw, ih);
-                            const adjData = applyAdjustments(imgData, adjustments);
+                            const adjData = applyAdjustments(imgData, adjustments ?? {});
                             const proc = document.createElement('canvas');
                             proc.width = iw;
                             proc.height = ih;
@@ -176,7 +186,16 @@ const CanvasPreview = forwardRef<CanvasPreviewHandle, Props>(
             } catch {
                 // ignore
             }
-        }, [adjustments]);
+        }, [adjustmentsSig, hasAdjustments]);
+
+        const drawRafRef = useRef<number | null>(null);
+        const requestDraw = useCallback(() => {
+            if (drawRafRef.current !== null) return;
+            drawRafRef.current = requestAnimationFrame(() => {
+                drawRafRef.current = null;
+                drawToCanvas();
+            });
+        }, [drawToCanvas]);
 
         // list of pending resolvers that callers can await via waitForNextDraw
         const drawWaitersRef = useRef<Array<() => void>>([]);
@@ -398,6 +417,32 @@ const CanvasPreview = forwardRef<CanvasPreviewHandle, Props>(
             window.addEventListener('mouseup', onUp);
         };
 
+        const selectionRafRef = useRef<number | null>(null);
+        const pendingSelectionRef = useRef<null | { x: number; y: number; w: number; h: number }>(
+            null
+        );
+        const scheduleSelection = (next: { x: number; y: number; w: number; h: number }) => {
+            pendingSelectionRef.current = next;
+            if (selectionRafRef.current !== null) return;
+            selectionRafRef.current = requestAnimationFrame(() => {
+                selectionRafRef.current = null;
+                if (pendingSelectionRef.current) {
+                    setSelection(pendingSelectionRef.current);
+                    pendingSelectionRef.current = null;
+                }
+            });
+        };
+        const flushPendingSelection = () => {
+            if (selectionRafRef.current !== null) {
+                cancelAnimationFrame(selectionRafRef.current);
+                selectionRafRef.current = null;
+            }
+            if (pendingSelectionRef.current) {
+                setSelection(pendingSelectionRef.current);
+                pendingSelectionRef.current = null;
+            }
+        };
+
         // Pointer interactions for crop selection
         const onSelectionPointerDown = (e: React.MouseEvent) => {
             // only handle left button
@@ -449,7 +494,7 @@ const CanvasPreview = forwardRef<CanvasPreviewHandle, Props>(
                     const ch = r.height;
                     const clampedX = Math.max(0, Math.min(cw - drag.orig.w, nx));
                     const clampedY = Math.max(0, Math.min(ch - drag.orig.h, ny));
-                    setSelection({
+                    scheduleSelection({
                         x: clampedX,
                         y: clampedY,
                         w: drag.orig.w,
@@ -488,12 +533,13 @@ const CanvasPreview = forwardRef<CanvasPreviewHandle, Props>(
                     ny = Math.max(0, Math.min(ny, ch - 1));
                     nw = Math.max(minSize, Math.min(nw, cw - nx));
                     nh = Math.max(minSize, Math.min(nh, ch - ny));
-                    setSelection({ x: nx, y: ny, w: nw, h: nh });
+                    scheduleSelection({ x: nx, y: ny, w: nw, h: nh });
                 }
             };
 
             const onUp = () => {
                 draggingRef.current = null;
+                flushPendingSelection();
                 window.removeEventListener('mousemove', onMove);
                 window.removeEventListener('mouseup', onUp);
             };
@@ -504,9 +550,9 @@ const CanvasPreview = forwardRef<CanvasPreviewHandle, Props>(
         useEffect(() => {
             const container = previewContainerRef.current;
             if (!container) return;
-            const ro = new ResizeObserver(() => drawToCanvas());
+            const ro = new ResizeObserver(() => requestDraw());
             ro.observe(container);
-            window.addEventListener('resize', drawToCanvas);
+            window.addEventListener('resize', requestDraw);
 
             // attach native wheel listener as non-passive so we can call preventDefault()
             const wrapper = (ev: Event) => {
@@ -519,15 +565,26 @@ const CanvasPreview = forwardRef<CanvasPreviewHandle, Props>(
 
             return () => {
                 ro.disconnect();
-                window.removeEventListener('resize', drawToCanvas);
+                window.removeEventListener('resize', requestDraw);
                 container.removeEventListener('wheel', wrapper as EventListener);
             };
-        }, [drawToCanvas]);
+        }, [requestDraw]);
 
         // Trigger redraw when adjustments object changes
         useEffect(() => {
-            drawToCanvas();
-        }, [adjustments, drawToCanvas]);
+            requestDraw();
+        }, [adjustmentsSig, requestDraw]);
+
+        useEffect(() => {
+            return () => {
+                if (drawRafRef.current !== null) {
+                    cancelAnimationFrame(drawRafRef.current);
+                }
+                if (selectionRafRef.current !== null) {
+                    cancelAnimationFrame(selectionRafRef.current);
+                }
+            };
+        }, []);
 
         useImperativeHandle(ref, () => ({
             redraw: () => drawToCanvas(),

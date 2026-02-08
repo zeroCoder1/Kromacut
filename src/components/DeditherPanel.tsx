@@ -19,6 +19,7 @@ export const DeditherPanel: React.FC<Props> = ({ canvasRef, onApplyResult }) => 
     const handleApply = useCallback(async () => {
         if (!canvasRef.current) return;
         setWorking(true);
+        await new Promise((r) => requestAnimationFrame(r));
         try {
             // prefer adjusted image if available
             const blob = await canvasRef.current.exportAdjustedImageBlob?.();
@@ -57,6 +58,8 @@ export const DeditherPanel: React.FC<Props> = ({ canvasRef, onApplyResult }) => 
                 [1, 1],
             ];
 
+            const YIELD_MS = 12;
+            let lastYield = performance.now();
             // iterate pixels
             for (let y = 0; y < h; y++) {
                 for (let x = 0; x < w; x++) {
@@ -123,6 +126,10 @@ export const DeditherPanel: React.FC<Props> = ({ canvasRef, onApplyResult }) => 
                     out[idx + 1] = ng;
                     out[idx + 2] = nb;
                     out[idx + 3] = na;
+                }
+                if (performance.now() - lastYield > YIELD_MS) {
+                    await new Promise((r) => requestAnimationFrame(r));
+                    lastYield = performance.now();
                 }
             }
 
