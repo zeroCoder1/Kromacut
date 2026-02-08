@@ -352,6 +352,12 @@ function App(): React.ReactElement | null {
                                                 // set the postprocess target to the palette size, but do not lock it
                                                 if (id !== 'auto') setFinalColors(size);
                                             }}
+                                            onReset={() => {
+                                                setFinalColors(16);
+                                                setWeight(128);
+                                                setAlgorithm('kmeans');
+                                                setSelectedPalette('auto');
+                                            }}
                                         />
                                         <SwatchesPanel
                                             swatches={swatches}
