@@ -173,6 +173,27 @@ export function useColorSlicing({
         }
     }, [displayOrder, colorSliceHeights, layerHeight, slicerFirstLayerHeight]);
 
+    // Check if the current state already matches what reset would produce
+    const isResetState = useMemo(() => {
+        if (filtered.length === 0) return true;
+        // compute the luminance-sorted order
+        const lumOrder = filtered.map((_, i) => i);
+        lumOrder.sort((a, b) => hexLuminance(filtered[a].hex) - hexLuminance(filtered[b].hex));
+        // compare order
+        if (displayOrder.length !== lumOrder.length) return false;
+        for (let i = 0; i < lumOrder.length; i++) {
+            if (displayOrder[i] !== lumOrder[i]) return false;
+        }
+        // compare heights
+        for (let idx = 0; idx < lumOrder.length; idx++) {
+            const fi = lumOrder[idx];
+            const expected = idx === 0 ? Math.max(layerHeight, slicerFirstLayerHeight) : layerHeight;
+            const actual = colorSliceHeights[fi] ?? layerHeight;
+            if (Math.abs(actual - expected) > 1e-6) return false;
+        }
+        return true;
+    }, [filtered, displayOrder, colorSliceHeights, layerHeight, slicerFirstLayerHeight]);
+
     return {
         filtered,
         colorSliceHeights,
@@ -181,5 +202,6 @@ export function useColorSlicing({
         onRowChange,
         handleResetHeights,
         handleColorOrderChange,
+        isResetState,
     };
 }
