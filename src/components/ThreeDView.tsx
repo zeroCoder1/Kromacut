@@ -80,6 +80,7 @@ export default function ThreeDView({
 }: ThreeDViewProps) {
     const mountRef = useRef<HTMLDivElement | null>(null);
     const [isBuilding, setIsBuilding] = useState(false);
+    const [buildProgress, setBuildProgress] = useState(0);
     const [modelDimensions, setModelDimensions] = useState<{
         width: number;
         height: number;
@@ -90,16 +91,22 @@ export default function ThreeDView({
         setIsBuilding
     );
 
-    // Sync overlay visibility when build state changes
+    const progressRef = useRef(0);
+    const progressLastUpdateRef = useRef(0);
+    const pushProgress = (value: number) => {
+        progressRef.current = value;
+        const now = performance.now();
+        if (value >= 1 || now - progressLastUpdateRef.current > 60) {
+            progressLastUpdateRef.current = now;
+            setBuildProgress(value);
+        }
+    };
+
     useEffect(() => {
-        const el = mountRef.current;
-        if (!el) return;
-        const overlay = Array.from(el.children).find(
-            (c) => c.nodeType === 1 && (c as HTMLElement).textContent === 'Building 3D model…'
-        ) as HTMLElement | undefined;
-        if (!overlay) return;
-        overlay.style.display = isBuilding ? 'flex' : 'none';
-    }, [isBuilding]);
+        if (controlsRef.current) {
+            controlsRef.current.enabled = !isBuilding;
+        }
+    }, [controlsRef, isBuilding]);
 
     // 2. Rebuild mesh geometry whenever inputs change (debounced, progressive, adaptive resolution)
     const buildTokenRef = useRef(0);
@@ -140,6 +147,7 @@ export default function ThreeDView({
             const token = ++buildTokenRef.current;
             // mark that a build is in progress for the overlay
             setIsBuilding(true);
+            pushProgress(0);
 
             const requestIdle = (fn: () => void) => {
                 const ric = (
@@ -171,6 +179,10 @@ export default function ThreeDView({
                 const fullW = img.naturalWidth;
                 const fullH = img.naturalHeight;
                 const { minX, minY, boxW, boxH } = bbox;
+                const totalUnitsBase = Math.max(1, colorOrder.length * boxH);
+                const totalUnits = autoPaintEnabled
+                    ? Math.max(1, totalUnitsBase + boxH)
+                    : totalUnitsBase;
 
                 const canvas = document.createElement('canvas');
                 canvas.width = fullW;
@@ -203,6 +215,7 @@ export default function ThreeDView({
                                 maxLum = Math.max(maxLum, lum);
                             }
                         }
+                        pushProgress((py - minY + 1) / totalUnits);
                     }
                     if (maxLum <= minLum) maxLum = minLum + 0.001;
 
@@ -289,6 +302,8 @@ export default function ThreeDView({
                                     }
                                 }
                             }
+
+                            pushProgress((boxH + i * boxH + (y + 1)) / totalUnits);
 
                             if (performance.now() - lastYield > YIELD_MS) {
                                 await new Promise((r) => requestAnimationFrame(r));
@@ -403,6 +418,7 @@ export default function ThreeDView({
                                     }
                                 }
                             }
+                            pushProgress((i * boxH + (y + 1)) / totalUnits);
                             if (performance.now() - lastYield > YIELD_MS) {
                                 await new Promise((r) => requestAnimationFrame(r));
                                 if (token !== buildTokenRef.current) return;
@@ -496,6 +512,7 @@ export default function ThreeDView({
                 }
 
                 requestRender();
+                pushProgress(1);
             };
 
             (async () => {
@@ -552,7 +569,10 @@ export default function ThreeDView({
                         res();
                     })
                 );
-                if (token === buildTokenRef.current) setIsBuilding(false);
+                if (token === buildTokenRef.current) {
+                    setIsBuilding(false);
+                    pushProgress(1);
+                }
             })();
         }, 120);
 
@@ -583,6 +603,24 @@ export default function ThreeDView({
 
     return (
         <div className="w-full h-full relative" ref={mountRef}>
+            {isBuilding && (
+                <div className="absolute inset-0 z-20 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+                    <div className="w-[260px] rounded-xl border border-border/60 bg-background/90 shadow-lg px-4 py-3">
+                        <div className="text-sm font-semibold text-foreground">
+                            Generating mesh...
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">
+                            {Math.round(buildProgress * 100)}%
+                        </div>
+                        <div className="mt-3 h-2 w-full rounded-full bg-muted">
+                            <div
+                                className="h-2 rounded-full bg-primary transition-[width] duration-150"
+                                style={{ width: `${Math.round(buildProgress * 100)}%` }}
+                            />
+                        </div>
+                    </div>
+                </div>
+            )}
             {modelDimensions && (
                 <div
                     className="absolute top-2 left-2 px-2 py-1 rounded-full bg-primary/10 text-primary text-xs font-mono font-semibold z-10"
