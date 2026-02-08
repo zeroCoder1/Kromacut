@@ -10,6 +10,7 @@ interface PrintSettingsCardProps {
     onSlicerFirstLayerHeightChange: (v: number) => void;
     onPixelSizeChange: (v: number) => void;
     onReset: () => void;
+    allDefault?: boolean;
 }
 
 export default function PrintSettingsCard({
@@ -20,6 +21,7 @@ export default function PrintSettingsCard({
     onSlicerFirstLayerHeightChange,
     onPixelSizeChange,
     onReset,
+    allDefault = false,
 }: PrintSettingsCardProps) {
     return (
         <Card className="p-4 border border-border/50">
@@ -33,9 +35,10 @@ export default function PrintSettingsCard({
                 <button
                     type="button"
                     onClick={onReset}
+                    disabled={allDefault}
                     title="Reset print settings to default"
                     aria-label="Reset print settings"
-                    className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-amber-600 hover:bg-amber-600/15 transition-colors select-none cursor-pointer"
+                    className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-amber-600 hover:bg-amber-600/15 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground select-none cursor-pointer"
                 >
                     <RotateCcw className="w-4 h-4" />
                 </button>
