@@ -13,6 +13,7 @@ interface Props {
 
 export const DeditherPanel: React.FC<Props> = ({ canvasRef, onApplyResult }) => {
     const [weight, setWeight] = useState<number>(4);
+    const [passes, setPasses] = useState<number>(1);
     const [working, setWorking] = useState(false);
     const DEFAULT_WEIGHT = 4;
 
@@ -41,10 +42,7 @@ export const DeditherPanel: React.FC<Props> = ({ canvasRef, onApplyResult }) => 
             if (!ctx) return;
             ctx.drawImage(img, 0, 0, w, h);
             const data = ctx.getImageData(0, 0, w, h);
-            const dd = data.data;
-
-            // Output copy
-            const out = new Uint8ClampedArray(dd);
+            let current = new Uint8ClampedArray(data.data);
 
             // neighbor offsets for 3x3 window excluding center
             const neigh: Array<[number, number]> = [
@@ -60,80 +58,90 @@ export const DeditherPanel: React.FC<Props> = ({ canvasRef, onApplyResult }) => 
 
             const YIELD_MS = 12;
             let lastYield = performance.now();
-            // iterate pixels
-            for (let y = 0; y < h; y++) {
-                for (let x = 0; x < w; x++) {
-                    const idx = (y * w + x) * 4;
-                    const r = dd[idx],
-                        g = dd[idx + 1],
-                        b = dd[idx + 2],
-                        a = dd[idx + 3];
+            const totalPasses = Math.max(1, Math.min(10, Math.round(passes)));
 
-                    // count same-color neighbors
-                    let sameCount = 0;
-                    const counts = new Map<number, number>();
-                    for (const [dx, dy] of neigh) {
-                        const nx = x + dx;
-                        const ny = y + dy;
-                        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
-                        const nidx = (ny * w + nx) * 4;
-                        const nr = dd[nidx],
-                            ng = dd[nidx + 1],
-                            nb = dd[nidx + 2],
-                            na = dd[nidx + 3];
-                        if (nr === r && ng === g && nb === b && na === a) {
-                            sameCount++;
-                        } else {
-                            // candidate color key (pack rgba into 32-bit int)
-                            const key =
-                                ((nr & 0xff) << 24) |
-                                ((ng & 0xff) << 16) |
-                                ((nb & 0xff) << 8) |
-                                (na & 0xff);
-                            counts.set(key, (counts.get(key) || 0) + 1);
+            for (let pass = 0; pass < totalPasses; pass++) {
+                const out = new Uint8ClampedArray(current);
+                // iterate pixels
+                for (let y = 0; y < h; y++) {
+                    for (let x = 0; x < w; x++) {
+                        const idx = (y * w + x) * 4;
+                        const r = current[idx],
+                            g = current[idx + 1],
+                            b = current[idx + 2],
+                            a = current[idx + 3];
+
+                        // count same-color neighbors
+                        let sameCount = 0;
+                        const counts = new Map<number, number>();
+                        for (const [dx, dy] of neigh) {
+                            const nx = x + dx;
+                            const ny = y + dy;
+                            if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+                            const nidx = (ny * w + nx) * 4;
+                            const nr = current[nidx],
+                                ng = current[nidx + 1],
+                                nb = current[nidx + 2],
+                                na = current[nidx + 3];
+                            if (nr === r && ng === g && nb === b && na === a) {
+                                sameCount++;
+                            } else {
+                                // candidate color key (pack rgba into 32-bit int)
+                                const key =
+                                    ((nr & 0xff) << 24) |
+                                    ((ng & 0xff) << 16) |
+                                    ((nb & 0xff) << 8) |
+                                    (na & 0xff);
+                                counts.set(key, (counts.get(key) || 0) + 1);
+                            }
                         }
-                    }
 
-                    if (sameCount >= weight) {
-                        // keep original
-                        continue;
-                    }
-
-                    // pick most frequent candidate color (excluding same as itself)
-                    if (counts.size === 0) {
-                        // nothing to choose
-                        continue;
-                    }
-                    // find max count
-                    let max = 0;
-                    const top: number[] = [];
-                    counts.forEach((v, k) => {
-                        if (v > max) {
-                            max = v;
-                            top.length = 0;
-                            top.push(k);
-                        } else if (v === max) {
-                            top.push(k);
+                        if (sameCount >= weight) {
+                            // keep original
+                            continue;
                         }
-                    });
-                    // pick random among top
-                    const pick = top[Math.floor(Math.random() * top.length)];
-                    const nr = (pick >>> 24) & 0xff;
-                    const ng = (pick >>> 16) & 0xff;
-                    const nb = (pick >>> 8) & 0xff;
-                    const na = pick & 0xff;
-                    out[idx] = nr;
-                    out[idx + 1] = ng;
-                    out[idx + 2] = nb;
-                    out[idx + 3] = na;
+
+                        // pick most frequent candidate color (excluding same as itself)
+                        if (counts.size === 0) {
+                            // nothing to choose
+                            continue;
+                        }
+                        // find max count
+                        let max = 0;
+                        const top: number[] = [];
+                        counts.forEach((v, k) => {
+                            if (v > max) {
+                                max = v;
+                                top.length = 0;
+                                top.push(k);
+                            } else if (v === max) {
+                                top.push(k);
+                            }
+                        });
+                        // pick random among top
+                        const pick = top[Math.floor(Math.random() * top.length)];
+                        const nr = (pick >>> 24) & 0xff;
+                        const ng = (pick >>> 16) & 0xff;
+                        const nb = (pick >>> 8) & 0xff;
+                        const na = pick & 0xff;
+                        out[idx] = nr;
+                        out[idx + 1] = ng;
+                        out[idx + 2] = nb;
+                        out[idx + 3] = na;
+                    }
+                    if (performance.now() - lastYield > YIELD_MS) {
+                        await new Promise((r) => requestAnimationFrame(r));
+                        lastYield = performance.now();
+                    }
                 }
+                current = out;
                 if (performance.now() - lastYield > YIELD_MS) {
                     await new Promise((r) => requestAnimationFrame(r));
                     lastYield = performance.now();
                 }
             }
 
-            const outData = new ImageData(out, w, h);
+            const outData = new ImageData(current, w, h);
             ctx.putImageData(outData, 0, 0);
             const outBlob = await new Promise<Blob | null>((res) =>
                 c.toBlob((b) => res(b), 'image/png')
@@ -146,7 +154,7 @@ export const DeditherPanel: React.FC<Props> = ({ canvasRef, onApplyResult }) => 
         } finally {
             setWorking(false);
         }
-    }, [canvasRef, weight, onApplyResult]);
+    }, [canvasRef, weight, passes, onApplyResult]);
 
     return (
         <Card className="p-4 border border-border/50 space-y-4">
@@ -191,6 +199,26 @@ export const DeditherPanel: React.FC<Props> = ({ canvasRef, onApplyResult }) => 
                     step={1}
                     value={[weight]}
                     onValueChange={(value) => setWeight(value[0])}
+                    className="w-full"
+                />
+            </div>
+
+            <div className="space-y-2">
+                <div className="flex justify-between items-center text-sm gap-2">
+                    <Label htmlFor="passes-slider" className="font-medium">
+                        Passes
+                    </Label>
+                    <span className="px-2 py-1 rounded-full bg-primary/10 text-primary text-xs font-mono font-semibold">
+                        {passes}
+                    </span>
+                </div>
+                <Slider
+                    id="passes-slider"
+                    min={1}
+                    max={10}
+                    step={1}
+                    value={[passes]}
+                    onValueChange={(value) => setPasses(value[0])}
                     className="w-full"
                 />
             </div>
