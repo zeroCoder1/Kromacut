@@ -110,9 +110,7 @@ export const AdjustmentsPanel: React.FC<Props> = React.memo(
             <Card className="p-4 border border-border/50 space-y-4">
                 <div>
                     <h3 className="text-sm font-semibold text-foreground">Adjustments</h3>
-                    <p className="text-xs text-muted-foreground mt-1">
-                        Fine-tune image properties
-                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">Fine-tune image properties</p>
                 </div>
                 <div className="h-px bg-border/50" />
                 <div className="space-y-4">

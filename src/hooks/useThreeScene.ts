@@ -120,25 +120,6 @@ export function useThreeScene(
         };
         rafRef.current = requestAnimationFrame(animate);
 
-        // Create an overlay element for build-in-progress messaging
-        const overlay = document.createElement('div');
-        overlay.style.position = 'absolute';
-        overlay.style.left = '0';
-        overlay.style.top = '0';
-        overlay.style.width = '100%';
-        overlay.style.height = '100%';
-        overlay.style.display = 'none';
-        overlay.style.alignItems = 'center';
-        overlay.style.justifyContent = 'center';
-        overlay.style.pointerEvents = 'none';
-        overlay.style.zIndex = '10';
-        overlay.style.color = '#fff';
-        overlay.style.fontFamily = 'sans-serif';
-        overlay.style.fontSize = '14px';
-        overlay.textContent = 'Building 3D model…';
-        el.style.position = el.style.position || 'relative';
-        el.appendChild(overlay);
-
         return () => {
             if (rafRef.current) cancelAnimationFrame(rafRef.current);
             ro.disconnect();
@@ -148,7 +129,6 @@ export function useThreeScene(
             renderer.dispose();
             if (renderer.domElement.parentNode)
                 renderer.domElement.parentNode.removeChild(renderer.domElement);
-            if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
             // clear refs
             rendererRef.current = null;
             sceneRef.current = null;
