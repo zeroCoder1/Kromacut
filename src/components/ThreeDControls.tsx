@@ -87,6 +87,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
     const [enhancedColorMatch, setEnhancedColorMatch] = useState(false);
     const [allowRepeatedSwaps, setAllowRepeatedSwaps] = useState(false);
     const [heightDithering, setHeightDithering] = useState(false);
+    const [ditherLineWidth, setDitherLineWidth] = useState(0.42);
 
     const handleEnhancedColorMatchChange = useCallback((v: boolean) => {
         setEnhancedColorMatch(v);
@@ -184,6 +185,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                 enhancedColorMatch,
                 allowRepeatedSwaps,
                 heightDithering,
+                ditherLineWidth,
                 autoPaintResult,
                 autoPaintSwatches: autoPaintSliceData.virtualSwatches,
                 autoPaintFilamentSwatches: autoPaintSliceData.filamentSwatches,
@@ -213,6 +215,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         enhancedColorMatch,
         allowRepeatedSwaps,
         heightDithering,
+        ditherLineWidth,
         autoPaintResult,
         autoPaintSliceData,
     ]);
@@ -292,6 +295,8 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                     setAllowRepeatedSwaps={setAllowRepeatedSwaps}
                     heightDithering={heightDithering}
                     setHeightDithering={setHeightDithering}
+                    ditherLineWidth={ditherLineWidth}
+                    setDitherLineWidth={setDitherLineWidth}
                 />
 
                 {/* Manual Tab */}

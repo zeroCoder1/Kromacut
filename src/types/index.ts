@@ -21,6 +21,7 @@ export interface ThreeDControlsStateShape {
     enhancedColorMatch?: boolean;
     allowRepeatedSwaps?: boolean;
     heightDithering?: boolean;
+    ditherLineWidth?: number;
     // Auto-paint computed state (only used when paintMode is 'autopaint')
     autoPaintResult?: AutoPaintResult;
     autoPaintSwatches?: Swatch[];

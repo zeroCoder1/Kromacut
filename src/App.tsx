@@ -447,6 +447,7 @@ function App(): React.ReactElement | null {
                                     autoPaintTotalHeight={threeDState.autoPaintResult?.totalHeight}
                                     enhancedColorMatch={threeDState.enhancedColorMatch}
                                     heightDithering={threeDState.heightDithering}
+                                    ditherLineWidth={threeDState.ditherLineWidth}
                                 />
                             )}
                             <PreviewActions
