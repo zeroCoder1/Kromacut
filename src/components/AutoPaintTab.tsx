@@ -104,6 +104,14 @@ export default function AutoPaintTab({
     ditherLineWidth,
     setDitherLineWidth,
 }: AutoPaintTabProps) {
+    const [localDitherLineWidth, setLocalDitherLineWidth] = React.useState(
+        ditherLineWidth.toString()
+    );
+
+    React.useEffect(() => {
+        setLocalDitherLineWidth(ditherLineWidth.toString());
+    }, [ditherLineWidth]);
+
     return (
         <TabsContent value="autopaint" forceMount className="data-[state=inactive]:hidden">
             <Card className="p-4 border border-border/50">
@@ -417,17 +425,24 @@ export default function AutoPaintTab({
                                         min={0.1}
                                         max={2}
                                         step={0.01}
-                                        value={ditherLineWidth}
+                                        value={localDitherLineWidth}
                                         onChange={(e) => {
-                                            const num = Number(e.target.value);
-                                            if (!isNaN(num) && num > 0) {
-                                                setDitherLineWidth(num);
-                                            }
+                                            setLocalDitherLineWidth(e.target.value);
                                         }}
                                         onBlur={() => {
-                                            setDitherLineWidth(
-                                                Math.max(0.1, Math.min(2, ditherLineWidth))
-                                            );
+                                            let val = parseFloat(localDitherLineWidth);
+                                            if (isNaN(val)) {
+                                                setLocalDitherLineWidth(ditherLineWidth.toString());
+                                                return;
+                                            }
+                                            val = Math.max(0.1, Math.min(2, val));
+                                            setDitherLineWidth(val);
+                                            setLocalDitherLineWidth(val.toString());
+                                        }}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.currentTarget.blur();
+                                            }
                                         }}
                                         className="w-20 h-7 text-xs"
                                     />
