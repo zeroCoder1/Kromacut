@@ -3,6 +3,8 @@ import { Card } from '@/components/ui/card';
 import { NumberInput, Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Plus, Trash2, Sparkles, Save, Download, Upload, FilePlus } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
 import {
     Select,
     SelectContent,
@@ -56,6 +58,12 @@ interface AutoPaintTabProps {
 
     // Image colors
     filteredCount: number;
+
+    // Enhanced matching options
+    enhancedColorMatch: boolean;
+    setEnhancedColorMatch: (v: boolean) => void;
+    allowRepeatedSwaps: boolean;
+    setAllowRepeatedSwaps: (v: boolean) => void;
 }
 
 export default function AutoPaintTab({
@@ -83,6 +91,10 @@ export default function AutoPaintTab({
     autoPaintResult,
     autoPaintSliceData,
     filteredCount,
+    enhancedColorMatch,
+    setEnhancedColorMatch,
+    allowRepeatedSwaps,
+    setAllowRepeatedSwaps,
 }: AutoPaintTabProps) {
     return (
         <TabsContent value="autopaint" forceMount className="data-[state=inactive]:hidden">
@@ -336,6 +348,42 @@ export default function AutoPaintTab({
                                         )}
                                 </div>
                             )}
+                        </div>
+                    )}
+
+                    {/* Enhanced matching options */}
+                    {filaments.length > 0 && (
+                        <div className="space-y-3 pt-2">
+                            <div className="h-px bg-border/50" />
+                            <div className="flex items-center justify-between">
+                                <Label
+                                    htmlFor="enhanced-color-match"
+                                    className="text-xs font-medium text-foreground cursor-pointer"
+                                >
+                                    Enhanced color matching
+                                </Label>
+                                <Switch
+                                    id="enhanced-color-match"
+                                    checked={enhancedColorMatch}
+                                    onCheckedChange={setEnhancedColorMatch}
+                                />
+                            </div>
+                            <div
+                                className={`flex items-center justify-between transition-opacity ${enhancedColorMatch ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}
+                            >
+                                <Label
+                                    htmlFor="allow-repeated-swaps"
+                                    className="text-xs font-medium text-foreground cursor-pointer"
+                                >
+                                    Allow repeated filament swaps
+                                </Label>
+                                <Switch
+                                    id="allow-repeated-swaps"
+                                    checked={allowRepeatedSwaps}
+                                    onCheckedChange={setAllowRepeatedSwaps}
+                                    disabled={!enhancedColorMatch}
+                                />
+                            </div>
                         </div>
                     )}
 
