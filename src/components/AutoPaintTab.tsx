@@ -66,6 +66,8 @@ interface AutoPaintTabProps {
     setAllowRepeatedSwaps: (v: boolean) => void;
     heightDithering: boolean;
     setHeightDithering: (v: boolean) => void;
+    ditherLineWidth: number;
+    setDitherLineWidth: (v: number) => void;
 }
 
 export default function AutoPaintTab({
@@ -99,6 +101,8 @@ export default function AutoPaintTab({
     setAllowRepeatedSwaps,
     heightDithering,
     setHeightDithering,
+    ditherLineWidth,
+    setDitherLineWidth,
 }: AutoPaintTabProps) {
     return (
         <TabsContent value="autopaint" forceMount className="data-[state=inactive]:hidden">
@@ -404,6 +408,41 @@ export default function AutoPaintTab({
                                     disabled={!enhancedColorMatch}
                                 />
                             </div>
+                            {heightDithering && enhancedColorMatch && (
+                                <div className="flex items-center gap-2 pl-0.5">
+                                    <label className="text-[11px] text-muted-foreground whitespace-nowrap">
+                                        Line width
+                                    </label>
+                                    <NumberInput
+                                        min={0.1}
+                                        max={2}
+                                        step={0.01}
+                                        value={ditherLineWidth}
+                                        onChange={(e) => {
+                                            const num = Number(e.target.value);
+                                            if (!isNaN(num) && num > 0) {
+                                                setDitherLineWidth(num);
+                                            }
+                                        }}
+                                        onBlur={() => {
+                                            setDitherLineWidth(
+                                                Math.max(0.1, Math.min(2, ditherLineWidth))
+                                            );
+                                        }}
+                                        className="w-20 h-7 text-xs"
+                                    />
+                                    <span className="text-[10px] text-muted-foreground">mm</span>
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        onClick={() => setDitherLineWidth(0.42)}
+                                        className="h-7 px-1.5 text-[10px] text-muted-foreground hover:text-foreground ml-auto"
+                                        title="Reset to default (0.42mm)"
+                                    >
+                                        Reset
+                                    </Button>
+                                </div>
+                            )}
                         </div>
                     )}
 

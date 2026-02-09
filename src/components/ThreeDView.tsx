@@ -21,6 +21,7 @@ interface ThreeDViewProps {
     autoPaintTotalHeight?: number; // Total model height when auto-paint is enabled
     enhancedColorMatch?: boolean; // Use color-distance mapping instead of luminance
     heightDithering?: boolean; // Floyd-Steinberg error diffusion on height map
+    ditherLineWidth?: number; // Minimum dot size in mm for dithering
 }
 
 // Convert hex color to RGB tuple
@@ -81,6 +82,7 @@ export default function ThreeDView({
     autoPaintTotalHeight,
     enhancedColorMatch = false,
     heightDithering = false,
+    ditherLineWidth = 0.42,
 }: ThreeDViewProps) {
     const mountRef = useRef<HTMLDivElement | null>(null);
     const [isBuilding, setIsBuilding] = useState(false);
@@ -467,58 +469,157 @@ export default function ThreeDView({
                         // --- Pass 2: Quantize heights (with optional dithering) ---
                         // The continuous height map has sub-layer precision, but
                         // the 3D model must use discrete layer heights.  When
-                        // heightDithering is ON, Floyd-Steinberg error diffusion
-                        // distributes quantization error to neighbors so adjacent
-                        // pixels alternate between layer heights, creating visual
-                        // gradients instead of flat monochrome blocks.  When OFF,
-                        // simple rounding is used (faster, but more flat patches).
+                        // heightDithering is ON, block-aware Floyd-Steinberg error
+                        // diffusion produces dots sized to the printer's line width
+                        // so the dither pattern is actually printable.  Edges
+                        // between different quantized heights are protected from
+                        // dithering to avoid staircase artifacts that expose wrong
+                        // colors.  When OFF, simple rounding is used.
                         if (layerHeight > 0 && heightDithering) {
-                            const errBuf = new Float64Array(boxW * boxH);
+                            // --- Step 2a: Snap everything to the grid first ---
+                            const snappedMap = new Float32Array(boxW * boxH);
+                            for (let mi = 0; mi < boxW * boxH; mi++) {
+                                const h = pixelHeightMap[mi];
+                                if (h <= 0) {
+                                    snappedMap[mi] = 0;
+                                    continue;
+                                }
+                                const delta = Math.max(0, h - slicerFirstLayerHeight);
+                                let s =
+                                    slicerFirstLayerHeight +
+                                    Math.round(delta / layerHeight) * layerHeight;
+                                s = Math.max(slicerFirstLayerHeight, Math.min(maxModelH, s));
+                                snappedMap[mi] = s;
+                            }
 
+                            // --- Step 2b: Identify edge pixels ---
+                            // A pixel is on an edge if any of its 4-connected
+                            // neighbors has a different snapped height.  Dithering
+                            // these would create jagged staircases that expose the
+                            // wrong filament color, so we leave them at their
+                            // nearest-round height.
+                            const isEdge = new Uint8Array(boxW * boxH);
                             for (let y = 0; y < boxH; y++) {
-                                // Serpentine scan: alternate direction each row
-                                // to prevent directional banding artifacts
-                                const ltr = y % 2 === 0;
-
-                                for (let xi = 0; xi < boxW; xi++) {
-                                    const x = ltr ? xi : boxW - 1 - xi;
+                                for (let x = 0; x < boxW; x++) {
                                     const mi = y * boxW + x;
+                                    const sh = snappedMap[mi];
+                                    if (sh <= 0) continue;
+                                    if (
+                                        (x > 0 &&
+                                            snappedMap[mi - 1] > 0 &&
+                                            snappedMap[mi - 1] !== sh) ||
+                                        (x < boxW - 1 &&
+                                            snappedMap[mi + 1] > 0 &&
+                                            snappedMap[mi + 1] !== sh) ||
+                                        (y > 0 &&
+                                            snappedMap[mi - boxW] > 0 &&
+                                            snappedMap[mi - boxW] !== sh) ||
+                                        (y < boxH - 1 &&
+                                            snappedMap[mi + boxW] > 0 &&
+                                            snappedMap[mi + boxW] !== sh)
+                                    ) {
+                                        isEdge[mi] = 1;
+                                    }
+                                }
+                            }
 
-                                    const continuous = pixelHeightMap[mi];
-                                    if (continuous <= 0) continue; // transparent
+                            // --- Step 2c: Block-aware Floyd-Steinberg ---
+                            // The block size ensures dither dots are at least as
+                            // wide as the printer's line width (in pixels).
+                            const blockSize = Math.max(1, Math.round(ditherLineWidth / pixelSize));
+                            const bW = Math.ceil(boxW / blockSize);
+                            const bH = Math.ceil(boxH / blockSize);
 
-                                    // Add accumulated error from neighbors
-                                    const adjusted = continuous + errBuf[mi];
+                            // Compute average continuous height per block
+                            const blockAvg = new Float64Array(bW * bH);
+                            const blockCnt = new Uint32Array(bW * bH);
+                            const blockHasEdge = new Uint8Array(bW * bH);
+                            for (let y = 0; y < boxH; y++) {
+                                for (let x = 0; x < boxW; x++) {
+                                    const mi = y * boxW + x;
+                                    const h = pixelHeightMap[mi]; // still continuous
+                                    if (h <= 0) continue;
+                                    const bx = Math.floor(x / blockSize);
+                                    const by = Math.floor(y / blockSize);
+                                    const bi = by * bW + bx;
+                                    blockAvg[bi] += h;
+                                    blockCnt[bi]++;
+                                    if (isEdge[mi]) blockHasEdge[bi] = 1;
+                                }
+                            }
+                            for (let bi = 0; bi < bW * bH; bi++) {
+                                if (blockCnt[bi] > 0) blockAvg[bi] /= blockCnt[bi];
+                            }
 
-                                    // Snap to layer grid
-                                    const delta = Math.max(0, adjusted - slicerFirstLayerHeight);
-                                    let snapped =
-                                        slicerFirstLayerHeight +
-                                        Math.round(delta / layerHeight) * layerHeight;
+                            // Dither at block level
+                            const errBuf = new Float64Array(bW * bH);
+                            const blockSnapped = new Float32Array(bW * bH);
+
+                            for (let by = 0; by < bH; by++) {
+                                const ltr = by % 2 === 0;
+                                for (let bxi = 0; bxi < bW; bxi++) {
+                                    const bx = ltr ? bxi : bW - 1 - bxi;
+                                    const bi = by * bW + bx;
+                                    if (blockCnt[bi] === 0) continue;
+
+                                    let snapped: number;
+                                    if (blockHasEdge[bi]) {
+                                        // Edge block: no dithering, use simple snap
+                                        const delta = Math.max(
+                                            0,
+                                            blockAvg[bi] - slicerFirstLayerHeight
+                                        );
+                                        snapped =
+                                            slicerFirstLayerHeight +
+                                            Math.round(delta / layerHeight) * layerHeight;
+                                    } else {
+                                        const adjusted = blockAvg[bi] + errBuf[bi];
+                                        const delta = Math.max(
+                                            0,
+                                            adjusted - slicerFirstLayerHeight
+                                        );
+                                        snapped =
+                                            slicerFirstLayerHeight +
+                                            Math.round(delta / layerHeight) * layerHeight;
+                                    }
                                     snapped = Math.max(
                                         slicerFirstLayerHeight,
                                         Math.min(maxModelH, snapped)
                                     );
+                                    blockSnapped[bi] = snapped;
 
-                                    pixelHeightMap[mi] = snapped;
+                                    if (!blockHasEdge[bi]) {
+                                        const err = blockAvg[bi] + errBuf[bi] - snapped;
+                                        const xFwd = ltr ? bx + 1 : bx - 1;
+                                        const xDiagFwd = ltr ? bx + 1 : bx - 1;
+                                        const xDiagBack = ltr ? bx - 1 : bx + 1;
 
-                                    // Quantization error
-                                    const err = adjusted - snapped;
+                                        if (xFwd >= 0 && xFwd < bW)
+                                            errBuf[by * bW + xFwd] += err * (7 / 16);
+                                        if (by + 1 < bH) {
+                                            if (xDiagBack >= 0 && xDiagBack < bW)
+                                                errBuf[(by + 1) * bW + xDiagBack] += err * (3 / 16);
+                                            errBuf[(by + 1) * bW + bx] += err * (5 / 16);
+                                            if (xDiagFwd >= 0 && xDiagFwd < bW)
+                                                errBuf[(by + 1) * bW + xDiagFwd] += err * (1 / 16);
+                                        }
+                                    }
+                                }
+                            }
 
-                                    // Floyd-Steinberg distribution (7/16, 3/16, 5/16, 1/16)
-                                    // Direction-aware for serpentine scan
-                                    const xFwd = ltr ? x + 1 : x - 1;
-                                    const xDiagFwd = ltr ? x + 1 : x - 1;
-                                    const xDiagBack = ltr ? x - 1 : x + 1;
-
-                                    if (xFwd >= 0 && xFwd < boxW)
-                                        errBuf[y * boxW + xFwd] += err * (7 / 16);
-                                    if (y + 1 < boxH) {
-                                        if (xDiagBack >= 0 && xDiagBack < boxW)
-                                            errBuf[(y + 1) * boxW + xDiagBack] += err * (3 / 16);
-                                        errBuf[(y + 1) * boxW + x] += err * (5 / 16);
-                                        if (xDiagFwd >= 0 && xDiagFwd < boxW)
-                                            errBuf[(y + 1) * boxW + xDiagFwd] += err * (1 / 16);
+                            // Write block-level results back to pixel map
+                            for (let y = 0; y < boxH; y++) {
+                                for (let x = 0; x < boxW; x++) {
+                                    const mi = y * boxW + x;
+                                    if (pixelHeightMap[mi] <= 0) continue;
+                                    const bx = Math.floor(x / blockSize);
+                                    const by = Math.floor(y / blockSize);
+                                    const bi = by * bW + bx;
+                                    if (blockHasEdge[bi]) {
+                                        // Edge blocks: use per-pixel snap
+                                        pixelHeightMap[mi] = snappedMap[mi];
+                                    } else {
+                                        pixelHeightMap[mi] = blockSnapped[bi];
                                     }
                                 }
                             }
@@ -923,6 +1024,7 @@ export default function ThreeDView({
         autoPaintTotalHeight,
         enhancedColorMatch,
         heightDithering,
+        ditherLineWidth,
         cameraRef,
         controlsRef,
         materialRef,
