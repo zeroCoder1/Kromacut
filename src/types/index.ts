@@ -17,6 +17,9 @@ export interface ThreeDControlsStateShape {
     pixelSize: number; // mm per pixel (XY)
     filaments: Filament[];
     paintMode: 'manual' | 'autopaint';
+    // Enhanced color matching options
+    enhancedColorMatch?: boolean;
+    allowRepeatedSwaps?: boolean;
     // Auto-paint computed state (only used when paintMode is 'autopaint')
     autoPaintResult?: AutoPaintResult;
     autoPaintSwatches?: Swatch[];

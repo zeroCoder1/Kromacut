@@ -10,6 +10,10 @@
  * 2. CUMULATIVE HEIGHT: Total height = sum of all transition zones.
  * 3. COMPRESSION: If user sets a max height below the ideal, zones are compressed.
  * 4. LUMINANCE MAPPING: Image pixel brightness maps to position within zones.
+ * 5. ENHANCED COLOR MATCHING: Optimizes filament ordering by evaluating all
+ *    permutations for best color reproduction (DeltaE-based).
+ * 6. REPEATED SWAPS: Allows filaments to appear multiple times in the stack
+ *    to create intermediate blended colors (e.g., thin white over red = pink).
  */
 
 import type { Filament } from '../types';
@@ -26,6 +30,11 @@ export interface Lab {
     L: number;
     a: number;
     b: number;
+}
+
+/** Lab color with a frequency weight (0-1, normalized) */
+interface WeightedLab extends Lab {
+    weight: number;
 }
 
 /** A transition zone between two filaments */
@@ -402,6 +411,594 @@ export function compressZones(
 }
 
 // =============================================================================
+// IMAGE COLOR ANALYSIS
+// =============================================================================
+
+/**
+ * Cluster image swatches into a smaller set of weighted representative colors.
+ *
+ * Uses greedy agglomerative clustering in Lab space:
+ * 1. Convert all swatches to Lab, sorted by frequency (descending)
+ * 2. For each swatch, merge into the nearest existing cluster if
+ *    DeltaE < threshold, otherwise create a new cluster
+ * 3. Cluster centroid is the weighted average of its members
+ * 4. Normalize weights so they sum to 1.0
+ *
+ * This reduces thousands of unique image colors to ~20-40 representative
+ * targets, weighted by how much of the image each color region covers.
+ * The result is both faster scoring and smarter optimization —
+ * dominant image colors have higher weight and drive filament selection.
+ *
+ * @param swatches - Image colors with optional pixel counts
+ * @param maxClusters - Maximum number of clusters to produce (default 32)
+ * @param threshold - DeltaE merge threshold (default 5.0)
+ * @returns Weighted Lab targets, normalized so weights sum to 1.0
+ */
+function clusterImageColors(
+    swatches: Array<{ hex: string; count?: number }>,
+    maxClusters: number = 32,
+    threshold: number = 5.0
+): WeightedLab[] {
+    if (swatches.length === 0) return [];
+
+    // Convert to Lab with counts
+    const items = swatches.map((s) => ({
+        lab: rgbToLab(hexToRgb(s.hex)),
+        count: s.count ?? 1,
+    }));
+
+    // Sort by count descending — most common colors seed clusters first
+    items.sort((a, b) => b.count - a.count);
+
+    // Greedy clustering
+    const clusters: Array<{
+        L: number;
+        a: number;
+        b: number;
+        totalCount: number;
+    }> = [];
+
+    const thresholdSq = threshold * threshold;
+
+    for (const item of items) {
+        // Find nearest existing cluster
+        let bestIdx = -1;
+        let bestDeSq = Infinity;
+
+        for (let ci = 0; ci < clusters.length; ci++) {
+            const c = clusters[ci];
+            const deSq =
+                (item.lab.L - c.L) ** 2 + (item.lab.a - c.a) ** 2 + (item.lab.b - c.b) ** 2;
+            if (deSq < bestDeSq) {
+                bestDeSq = deSq;
+                bestIdx = ci;
+            }
+        }
+
+        if (bestIdx >= 0 && bestDeSq < thresholdSq) {
+            // Merge into existing cluster (weighted centroid update)
+            const c = clusters[bestIdx];
+            const total = c.totalCount + item.count;
+            const w1 = c.totalCount / total;
+            const w2 = item.count / total;
+            c.L = c.L * w1 + item.lab.L * w2;
+            c.a = c.a * w1 + item.lab.a * w2;
+            c.b = c.b * w1 + item.lab.b * w2;
+            c.totalCount = total;
+        } else if (clusters.length < maxClusters) {
+            // Create new cluster
+            clusters.push({
+                L: item.lab.L,
+                a: item.lab.a,
+                b: item.lab.b,
+                totalCount: item.count,
+            });
+        } else {
+            // At max clusters — force-merge into nearest
+            if (bestIdx >= 0) {
+                const c = clusters[bestIdx];
+                const total = c.totalCount + item.count;
+                const w1 = c.totalCount / total;
+                const w2 = item.count / total;
+                c.L = c.L * w1 + item.lab.L * w2;
+                c.a = c.a * w1 + item.lab.a * w2;
+                c.b = c.b * w1 + item.lab.b * w2;
+                c.totalCount = total;
+            }
+        }
+    }
+
+    // Normalize weights to sum to 1.0
+    const totalPixels = clusters.reduce((s, c) => s + c.totalCount, 0);
+    if (totalPixels === 0) return [];
+
+    return clusters.map((c) => ({
+        L: c.L,
+        a: c.a,
+        b: c.b,
+        weight: c.totalCount / totalPixels,
+    }));
+}
+
+// =============================================================================
+// ENHANCED COLOR MATCHING — ORDERING OPTIMIZATION
+// =============================================================================
+
+/**
+ * Generate all non-empty subsets of an array.
+ * For N items, produces 2^N - 1 subsets.
+ */
+function nonEmptySubsets<T>(arr: T[]): T[][] {
+    const result: T[][] = [];
+    const n = arr.length;
+    for (let mask = 1; mask < 1 << n; mask++) {
+        const subset: T[] = [];
+        for (let i = 0; i < n; i++) {
+            if (mask & (1 << i)) subset.push(arr[i]);
+        }
+        result.push(subset);
+    }
+    return result;
+}
+
+/**
+ * Generate all permutations of an array.
+ * Only used when array.length <= 7 (5040 permutations max).
+ */
+function permutations<T>(arr: T[]): T[][] {
+    if (arr.length <= 1) return [arr];
+    const result: T[][] = [];
+    for (let i = 0; i < arr.length; i++) {
+        const rest = [...arr.slice(0, i), ...arr.slice(i + 1)];
+        for (const perm of permutations(rest)) {
+            result.push([arr[i], ...perm]);
+        }
+    }
+    return result;
+}
+
+/**
+ * Build the achievable color palette for a given filament sequence.
+ *
+ * Simulates the Beer-Lambert blended color at each layer-height step
+ * through the stack and returns an array of { height, color } entries.
+ *
+ * @param sequence - Ordered filament sequence (can include repeats)
+ * @param layerHeight - Physical layer height
+ * @param firstLayerHeight - First layer height
+ * @returns Array of achievable { height, lab, rgb } at each layer step
+ */
+function buildAchievableColorPalette(
+    sequence: Array<{ id: string; color: string; td: number }>,
+    layerHeight: number,
+    firstLayerHeight: number
+): Array<{ height: number; lab: Lab; rgb: RGB }> {
+    if (sequence.length === 0) return [];
+
+    // Calculate zones for this sequence
+    const { zones } = calculateIdealHeight(
+        sequence.map((f) => ({ id: f.id, color: f.color, td: f.td })),
+        layerHeight,
+        Math.max(firstLayerHeight, layerHeight)
+    );
+
+    if (zones.length === 0) return [];
+
+    const totalHeight = zones[zones.length - 1].endHeight;
+    const palette: Array<{ height: number; lab: Lab; rgb: RGB }> = [];
+
+    let currentZ = 0;
+    let layerIndex = 0;
+    let prevZoneIndex = 0;
+    let thicknessInCurrentZone = 0;
+
+    while (currentZ < totalHeight + layerHeight * 0.5) {
+        const thickness = layerIndex === 0 ? Math.max(firstLayerHeight, layerHeight) : layerHeight;
+
+        // Find active zone
+        let activeZoneIndex = 0;
+        for (let zi = 0; zi < zones.length; zi++) {
+            if (currentZ >= zones[zi].startHeight && currentZ < zones[zi].endHeight) {
+                activeZoneIndex = zi;
+                break;
+            }
+            if (currentZ >= zones[zi].startHeight) {
+                activeZoneIndex = zi;
+            }
+        }
+
+        if (activeZoneIndex !== prevZoneIndex) {
+            thicknessInCurrentZone = currentZ - zones[activeZoneIndex].startHeight + thickness;
+            prevZoneIndex = activeZoneIndex;
+        } else {
+            thicknessInCurrentZone += thickness;
+        }
+
+        const zone = zones[activeZoneIndex];
+        const filamentColor = hexToRgb(zone.filamentColor);
+
+        let blendedColor: RGB;
+        if (activeZoneIndex === 0) {
+            blendedColor = filamentColor;
+        } else {
+            const bgColor = hexToRgb(zones[activeZoneIndex - 1].filamentColor);
+            blendedColor = blendColors(
+                bgColor,
+                filamentColor,
+                zone.filamentTd,
+                thicknessInCurrentZone
+            );
+        }
+
+        palette.push({
+            height: currentZ + thickness,
+            lab: rgbToLab(blendedColor),
+            rgb: blendedColor,
+        });
+
+        currentZ += thickness;
+        layerIndex++;
+
+        if (layerIndex > 500) break;
+    }
+
+    return palette;
+}
+
+/**
+ * Deduplicate a palette by collapsing consecutive entries whose colors
+ * are within a DeltaE threshold. Each cluster is represented by its
+ * midpoint height, giving the best possible height spread.
+ */
+function deduplicatePalette(
+    palette: Array<{ height: number; lab: Lab; rgb: RGB }>,
+    threshold: number = 3.0
+): Array<{ height: number; lab: Lab; rgb: RGB }> {
+    if (palette.length === 0) return [];
+
+    const result: Array<{ height: number; lab: Lab; rgb: RGB }> = [];
+    let clusterStart = 0;
+
+    for (let i = 1; i <= palette.length; i++) {
+        const prev = palette[i - 1];
+        const curr = i < palette.length ? palette[i] : null;
+
+        const shouldBreak =
+            !curr ||
+            Math.sqrt(
+                (curr.lab.L - prev.lab.L) ** 2 +
+                    (curr.lab.a - prev.lab.a) ** 2 +
+                    (curr.lab.b - prev.lab.b) ** 2
+            ) >= threshold;
+
+        if (shouldBreak) {
+            // Use the midpoint entry of this cluster
+            const midIdx = Math.floor((clusterStart + (i - 1)) / 2);
+            result.push(palette[midIdx]);
+            clusterStart = i;
+        }
+    }
+
+    return result;
+}
+
+/**
+ * Score a filament sequence against weighted image target colors.
+ *
+ * The score combines:
+ * 1. Weighted color accuracy — for each target, min DeltaE × weight.
+ *    Dominant image colors contribute more to the score, so the optimizer
+ *    prioritizes filament orderings that nail the most common colors.
+ * 2. Height spread — penalizes when distinct image colors collapse to
+ *    the same height (leading to flat surfaces).
+ * 3. Total layer count — penalizes the raw number of layers in the palette.
+ *    This punishes sequences with expensive transitions between dissimilar
+ *    colors (e.g., yellow→purple takes many layers to transition, vs
+ *    yellow→orange which is quick). More layers = taller model.
+ * 4. Transition waste — penalizes palette layers that don't closely match
+ *    any target color. These are "wasted" intermediate layers that exist
+ *    only as transitions and contribute no useful color to the image.
+ */
+function scoreSequenceAgainstImage(
+    palette: Array<{ height: number; lab: Lab; rgb: RGB }>,
+    imageTargets: WeightedLab[]
+): number {
+    if (palette.length === 0) return Infinity;
+
+    // Deduplicate: collapse consecutive near-identical colors
+    const reduced = deduplicatePalette(palette, 3.0);
+    if (reduced.length === 0) return Infinity;
+
+    // 1. Weighted color accuracy: sum of (min DeltaE × weight) per target
+    let weightedDeltaE = 0;
+    const bestMatchHeights: number[] = [];
+
+    // Also track which reduced palette entries are "useful" (matched by a target)
+    const usedPaletteEntries = new Set<number>();
+
+    for (const target of imageTargets) {
+        let minDE = Infinity;
+        let bestHeight = reduced[0].height;
+        let bestIdx = 0;
+        for (let ri = 0; ri < reduced.length; ri++) {
+            const entry = reduced[ri];
+            const de = Math.sqrt(
+                (entry.lab.L - target.L) ** 2 +
+                    (entry.lab.a - target.a) ** 2 +
+                    (entry.lab.b - target.b) ** 2
+            );
+            if (de < minDE) {
+                minDE = de;
+                bestHeight = entry.height;
+                bestIdx = ri;
+                if (de < 0.5) break;
+            }
+        }
+        weightedDeltaE += minDE * target.weight;
+        bestMatchHeights.push(bestHeight);
+        // Mark this palette entry as useful if it's a decent match
+        if (minDE < 15) usedPaletteEntries.add(bestIdx);
+    }
+
+    // Scale up so the magnitude is comparable to pre-weighting scores
+    weightedDeltaE *= imageTargets.length;
+
+    // 2. Height spread penalty: penalize when distinct image colors
+    //    collapse to the same height (leading to flat surfaces)
+    if (bestMatchHeights.length > 1 && reduced.length > 1) {
+        const totalModelHeight = reduced[reduced.length - 1].height - reduced[0].height;
+        if (totalModelHeight > 0) {
+            const uniqueHeights = new Set(bestMatchHeights.map((h) => Math.round(h * 100)));
+            const spreadRatio = uniqueHeights.size / imageTargets.length;
+            const spreadPenalty = (1 - spreadRatio) * imageTargets.length * 5;
+            weightedDeltaE += spreadPenalty;
+        }
+    }
+
+    // 3. Total layer count penalty: raw palette size reflects actual model height.
+    //    A sequence with expensive transitions (dissimilar hues) produces many
+    //    layers; smooth transitions (similar hues) produce few.
+    //    penalty = 0.5 per raw layer — small per layer but adds up significantly
+    //    for wasteful sequences (e.g., 40 layers vs 15 layers = +12.5 penalty)
+    weightedDeltaE += palette.length * 0.5;
+
+    // 4. Transition waste penalty: palette entries not matched by any target.
+    //    If a reduced palette entry is not the best match for any image target,
+    //    the transition height that produced it is wasted model space.
+    if (reduced.length > 1) {
+        const wastedEntries = reduced.length - usedPaletteEntries.size;
+        weightedDeltaE += wastedEntries * 1.5;
+    }
+
+    return weightedDeltaE;
+}
+
+/**
+ * Find the best filament ordering for the image colors.
+ *
+ * NOT all filaments need to be used — the algorithm evaluates subsets
+ * and only includes filaments that improve color reproduction.
+ *
+ * For ≤6 filaments, tries all permutations of all non-empty subsets.
+ * For >6 filaments, uses a greedy build that adds one filament at a time
+ * and stops when no further addition improves the score.
+ *
+ * @returns Optimal filament ordering (may be a subset of the input)
+ */
+function findBestFilamentOrder(
+    filaments: Filament[],
+    imageSwatches: Array<{ hex: string; count?: number }>,
+    layerHeight: number,
+    firstLayerHeight: number
+): Filament[] {
+    if (filaments.length <= 1) return [...filaments];
+
+    // Cluster image colors into weighted representative targets
+    const imageTargets = clusterImageColors(imageSwatches, 32, 5.0);
+    if (imageTargets.length === 0) return [...filaments];
+
+    // Apply frontlit TD scale
+    const scaledFilaments = filaments.map((f) => ({
+        ...f,
+        td: f.td * FRONTLIT_TD_SCALE,
+    }));
+
+    if (filaments.length <= 6) {
+        // Exhaustive search — try all permutations of all non-empty subsets
+        // For N=6: sum of k! * C(6,k) for k=1..6 = 1957 total permutations
+        const subsets = nonEmptySubsets(scaledFilaments);
+        let bestScore = Infinity;
+        let bestPerm = scaledFilaments;
+
+        for (const subset of subsets) {
+            const perms = permutations(subset);
+            for (const perm of perms) {
+                const palette = buildAchievableColorPalette(perm, layerHeight, firstLayerHeight);
+                const score = scoreSequenceAgainstImage(palette, imageTargets);
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestPerm = perm;
+                }
+            }
+        }
+
+        // Return the original filaments in the best ordering (unscaled TDs)
+        return bestPerm.map((sf) => filaments.find((f) => f.id === sf.id)!);
+    }
+
+    // Greedy heuristic for large sets:
+    // Build the sequence one filament at a time, stopping when no addition helps.
+    // Try each filament as a possible starting point.
+    const allStarts = scaledFilaments.map((f, idx) => ({ f, idx }));
+    let globalBestSequence: typeof scaledFilaments = [];
+    let globalBestScore = Infinity;
+
+    for (const { f: startFilament } of allStarts) {
+        const remaining = scaledFilaments.filter((sf) => sf.id !== startFilament.id);
+        const sequence = [startFilament];
+
+        let palette = buildAchievableColorPalette(sequence, layerHeight, firstLayerHeight);
+        let currentScore = scoreSequenceAgainstImage(palette, imageTargets);
+        const pool = [...remaining];
+
+        while (pool.length > 0) {
+            let bestIdx = -1;
+            let bestScore = currentScore;
+
+            for (let i = 0; i < pool.length; i++) {
+                const candidate = [...sequence, pool[i]];
+                const candidatePalette = buildAchievableColorPalette(
+                    candidate,
+                    layerHeight,
+                    firstLayerHeight
+                );
+                const candidateScore = scoreSequenceAgainstImage(candidatePalette, imageTargets);
+                if (candidateScore < bestScore) {
+                    bestScore = candidateScore;
+                    bestIdx = i;
+                }
+            }
+
+            // Stop if no filament improves the score
+            if (bestIdx < 0 || currentScore - bestScore < 0.5) break;
+
+            sequence.push(pool.splice(bestIdx, 1)[0]);
+            palette = buildAchievableColorPalette(sequence, layerHeight, firstLayerHeight);
+            currentScore = bestScore;
+        }
+
+        if (currentScore < globalBestScore) {
+            globalBestScore = currentScore;
+            globalBestSequence = [...sequence];
+        }
+    }
+
+    return globalBestSequence.map((sf) => filaments.find((f) => f.id === sf.id)!);
+}
+
+// =============================================================================
+// REPEATED SWAPS — SEQUENCE EXPANSION
+// =============================================================================
+
+/**
+ * Build an expanded filament sequence that allows filaments to repeat.
+ *
+ * Uses a greedy approach: starting from the base ordering, repeatedly
+ * tries inserting each available filament at the top of the stack.
+ * Stops when no insertion improves the palette coverage, or when
+ * a maximum sequence length is reached.
+ *
+ * Note: candidates are drawn from ALL original filaments, not just those
+ * in the base ordering — a filament omitted from the base ordering might
+ * still be useful as a blending layer.
+ *
+ * @param baseFilaments - The initial filament ordering (already optimized, may be a subset)
+ * @param allFilaments - The full set of available filaments
+ * @param imageSwatches - Target colors from the image
+ * @param layerHeight - Physical layer height
+ * @param firstLayerHeight - First layer height
+ * @returns Expanded filament sequence with potential repeats
+ */
+function buildRepeatedSwapSequence(
+    baseFilaments: Filament[],
+    allFilaments: Filament[],
+    imageSwatches: Array<{ hex: string; count?: number }>,
+    layerHeight: number,
+    firstLayerHeight: number
+): Filament[] {
+    if (baseFilaments.length === 0) return [];
+
+    // Cluster image colors into weighted representative targets
+    const imageTargets = clusterImageColors(imageSwatches, 32, 5.0);
+    if (imageTargets.length === 0) return [...baseFilaments];
+
+    // Start with the base sequence
+    let currentSequence = baseFilaments.map((f) => ({
+        ...f,
+        td: f.td * FRONTLIT_TD_SCALE,
+    }));
+
+    let currentPalette = buildAchievableColorPalette(
+        currentSequence,
+        layerHeight,
+        firstLayerHeight
+    );
+    let currentScore = scoreSequenceAgainstImage(currentPalette, imageTargets);
+
+    // Use ALL filaments as insertion candidates (scaled)
+    const candidates = allFilaments.map((f) => ({
+        ...f,
+        td: f.td * FRONTLIT_TD_SCALE,
+    }));
+
+    // Maximum number of extra swaps to try (avoid runaway sequences)
+    const MAX_EXTRA_SWAPS = Math.min(4, allFilaments.length);
+    // Minimum improvement threshold — stop if gains are diminishing
+    const MIN_IMPROVEMENT = 2.0;
+
+    for (let iter = 0; iter < MAX_EXTRA_SWAPS; iter++) {
+        let bestCandidate: (typeof candidates)[0] | null = null;
+        let bestInsertPos = -1;
+        let bestScore = currentScore;
+
+        for (const candidate of candidates) {
+            // Try inserting at every position in the sequence (not just append).
+            // Inserting earlier lets later filaments blend on top naturally,
+            // potentially reusing existing transitions rather than creating
+            // expensive new ones.
+            // Position 0 = new foundation, position len = append at top.
+            // Skip if it would create consecutive identical filaments.
+            for (let pos = 1; pos <= currentSequence.length; pos++) {
+                // Skip consecutive duplicates
+                if (pos > 0 && currentSequence[pos - 1].id === candidate.id) continue;
+                if (pos < currentSequence.length && currentSequence[pos].id === candidate.id)
+                    continue;
+
+                const trial = [
+                    ...currentSequence.slice(0, pos),
+                    candidate,
+                    ...currentSequence.slice(pos),
+                ];
+                const trialPalette = buildAchievableColorPalette(
+                    trial,
+                    layerHeight,
+                    firstLayerHeight
+                );
+                const trialScore = scoreSequenceAgainstImage(trialPalette, imageTargets);
+
+                if (trialScore < bestScore) {
+                    bestScore = trialScore;
+                    bestCandidate = candidate;
+                    bestInsertPos = pos;
+                }
+            }
+        }
+
+        if (!bestCandidate || bestInsertPos < 0 || currentScore - bestScore < MIN_IMPROVEMENT) {
+            break; // No meaningful improvement
+        }
+
+        currentSequence = [
+            ...currentSequence.slice(0, bestInsertPos),
+            bestCandidate,
+            ...currentSequence.slice(bestInsertPos),
+        ];
+        currentPalette = buildAchievableColorPalette(
+            currentSequence,
+            layerHeight,
+            firstLayerHeight
+        );
+        currentScore = bestScore;
+    }
+
+    // Map back to original (unscaled) filaments, preserving sequence with repeats
+    return currentSequence.map((sf) => {
+        const orig = allFilaments.find((f) => f.id === sf.id)!;
+        return { ...orig }; // Return copies with original TD
+    });
+}
+
+// =============================================================================
 // MAIN AUTO-PAINT ALGORITHM
 // =============================================================================
 
@@ -419,14 +1016,18 @@ export function compressZones(
  * @param layerHeight - Layer height in mm (e.g., 0.12)
  * @param firstLayerHeight - First layer height in mm (e.g., 0.20)
  * @param maxHeight - Optional maximum height constraint (undefined = auto)
+ * @param enhancedColorMatch - If true, optimize filament ordering for best color reproduction
+ * @param allowRepeatedSwaps - If true, allow filaments to appear multiple times in the stack
  * @returns Generated layer segments with zone information
  */
 export function generateAutoLayers(
     filaments: Filament[],
-    imageSwatches: Array<{ hex: string }>,
+    imageSwatches: Array<{ hex: string; count?: number }>,
     layerHeight: number,
     firstLayerHeight: number,
-    maxHeight?: number
+    maxHeight?: number,
+    enhancedColorMatch?: boolean,
+    allowRepeatedSwaps?: boolean
 ): AutoPaintResult {
     // --- STEP 1: VALIDATION ---
     if (filaments.length === 0) {
@@ -453,12 +1054,36 @@ export function generateAutoLayers(
         };
     }
 
-    // --- STEP 2: SORT FILAMENTS BY LUMINANCE (dark to light) ---
-    const sortedFilaments = [...filaments].sort((a, b) => {
-        const lumA = getLuminance(hexToRgb(a.color));
-        const lumB = getLuminance(hexToRgb(b.color));
-        return lumA - lumB;
-    });
+    // --- STEP 2: DETERMINE FILAMENT ORDERING ---
+    let sortedFilaments: Filament[];
+
+    if (enhancedColorMatch) {
+        // Enhanced: find the ordering that best covers the image's color palette
+        sortedFilaments = findBestFilamentOrder(
+            filaments,
+            imageSwatches,
+            layerHeight,
+            firstLayerHeight
+        );
+
+        // If repeated swaps are also enabled, expand the sequence
+        if (allowRepeatedSwaps) {
+            sortedFilaments = buildRepeatedSwapSequence(
+                sortedFilaments,
+                filaments,
+                imageSwatches,
+                layerHeight,
+                firstLayerHeight
+            );
+        }
+    } else {
+        // Standard: sort by luminance (dark to light)
+        sortedFilaments = [...filaments].sort((a, b) => {
+            const lumA = getLuminance(hexToRgb(a.color));
+            const lumB = getLuminance(hexToRgb(b.color));
+            return lumA - lumB;
+        });
+    }
 
     const filamentOrder = sortedFilaments.map((f) => f.id);
 
