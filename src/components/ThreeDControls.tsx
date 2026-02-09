@@ -86,10 +86,14 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
     const [autoPaintMaxHeight, setAutoPaintMaxHeight] = useState<number | undefined>(undefined);
     const [enhancedColorMatch, setEnhancedColorMatch] = useState(false);
     const [allowRepeatedSwaps, setAllowRepeatedSwaps] = useState(false);
+    const [heightDithering, setHeightDithering] = useState(false);
 
     const handleEnhancedColorMatchChange = useCallback((v: boolean) => {
         setEnhancedColorMatch(v);
-        if (!v) setAllowRepeatedSwaps(false);
+        if (!v) {
+            setAllowRepeatedSwaps(false);
+            setHeightDithering(false);
+        }
     }, []);
 
     useEffect(() => {
@@ -179,6 +183,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                 paintMode,
                 enhancedColorMatch,
                 allowRepeatedSwaps,
+                heightDithering,
                 autoPaintResult,
                 autoPaintSwatches: autoPaintSliceData.virtualSwatches,
                 autoPaintFilamentSwatches: autoPaintSliceData.filamentSwatches,
@@ -207,6 +212,7 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         paintMode,
         enhancedColorMatch,
         allowRepeatedSwaps,
+        heightDithering,
         autoPaintResult,
         autoPaintSliceData,
     ]);
@@ -284,6 +290,8 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                     setEnhancedColorMatch={handleEnhancedColorMatchChange}
                     allowRepeatedSwaps={allowRepeatedSwaps}
                     setAllowRepeatedSwaps={setAllowRepeatedSwaps}
+                    heightDithering={heightDithering}
+                    setHeightDithering={setHeightDithering}
                 />
 
                 {/* Manual Tab */}

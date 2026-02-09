@@ -20,6 +20,7 @@ export interface ThreeDControlsStateShape {
     // Enhanced color matching options
     enhancedColorMatch?: boolean;
     allowRepeatedSwaps?: boolean;
+    heightDithering?: boolean;
     // Auto-paint computed state (only used when paintMode is 'autopaint')
     autoPaintResult?: AutoPaintResult;
     autoPaintSwatches?: Swatch[];

@@ -20,6 +20,7 @@ interface ThreeDViewProps {
     autoPaintEnabled?: boolean;
     autoPaintTotalHeight?: number; // Total model height when auto-paint is enabled
     enhancedColorMatch?: boolean; // Use color-distance mapping instead of luminance
+    heightDithering?: boolean; // Floyd-Steinberg error diffusion on height map
 }
 
 // Convert hex color to RGB tuple
@@ -79,6 +80,7 @@ export default function ThreeDView({
     autoPaintEnabled = false,
     autoPaintTotalHeight,
     enhancedColorMatch = false,
+    heightDithering = false,
 }: ThreeDViewProps) {
     const mountRef = useRef<HTMLDivElement | null>(null);
     const [isBuilding, setIsBuilding] = useState(false);
@@ -371,7 +373,10 @@ export default function ThreeDView({
                         const maxModelH = cumulativeHeights[cumulativeHeights.length - 1] || 1;
                         const minModelH = cumulativeHeights[0] || 0;
 
-                        // Cache: pixel RGB key -> height
+                        // --- Pass 1: Compute continuous (un-snapped) heights ---
+                        // We deliberately do NOT snap to the layer grid here.
+                        // The RGB cache is still valid because it stores the ideal
+                        // continuous height; dithering happens spatially in Pass 2.
                         const colorHeightCache = new Map<number, number>();
 
                         for (let py = minY; py < minY + boxH; py++) {
@@ -412,8 +417,6 @@ export default function ThreeDView({
                                         bestDist = dist;
                                         const range = nd.maxHeight - nd.minHeight;
                                         if (range > 1e-6) {
-                                            // Flat zone: use image-relative luminance
-                                            // for surface texture sub-detail
                                             const lum = getLuminance(pr, pg, pb);
                                             const lumT = (lum - imgMinLum) / imgLumRange;
                                             targetHeight = nd.minHeight + lumT * range;
@@ -424,22 +427,16 @@ export default function ThreeDView({
                                 }
 
                                 // --- Match against transition segments ---
-                                // Project pixel onto each segment in Lab space.
-                                // The projection gives a fractional position t in
-                                // [0,1] along the segment, which maps to a height
-                                // between the two nodes.
                                 for (let si = 0; si < polySegs.length; si++) {
                                     const seg = polySegs[si];
-                                    if (seg.lenSq < 0.01) continue; // degenerate
+                                    if (seg.lenSq < 0.01) continue;
 
-                                    // Projection: t = dot(P-A, B-A) / |B-A|^2
                                     const pL = pLab.L - seg.aL;
                                     const pa = pLab.a - seg.aa;
                                     const pba = pLab.b - seg.ab;
                                     let t = (pL * seg.dL + pa * seg.da + pba * seg.db) / seg.lenSq;
                                     t = Math.max(0, Math.min(1, t));
 
-                                    // Distance from pixel to projected point
                                     const projL = seg.aL + t * seg.dL;
                                     const proja = seg.aa + t * seg.da;
                                     const projb = seg.ab + t * seg.db;
@@ -455,28 +452,91 @@ export default function ThreeDView({
                                     }
                                 }
 
-                                // Clamp to model bounds
+                                // Clamp to model bounds (continuous, no grid snap)
                                 targetHeight = Math.max(
                                     minModelH,
                                     Math.min(maxModelH, targetHeight)
                                 );
 
-                                // Snap to layer height grid
-                                if (layerHeight > 0) {
-                                    const delta = Math.max(
-                                        0,
-                                        targetHeight - slicerFirstLayerHeight
-                                    );
-                                    targetHeight =
-                                        slicerFirstLayerHeight +
-                                        Math.round(delta / layerHeight) * layerHeight;
-                                    targetHeight = Math.max(slicerFirstLayerHeight, targetHeight);
-                                }
-
                                 pixelHeightMap[mapIdx] = targetHeight;
                                 colorHeightCache.set(cacheKey, targetHeight);
                             }
                             pushProgress((py - minY + 1) / totalUnits);
+                        }
+
+                        // --- Pass 2: Quantize heights (with optional dithering) ---
+                        // The continuous height map has sub-layer precision, but
+                        // the 3D model must use discrete layer heights.  When
+                        // heightDithering is ON, Floyd-Steinberg error diffusion
+                        // distributes quantization error to neighbors so adjacent
+                        // pixels alternate between layer heights, creating visual
+                        // gradients instead of flat monochrome blocks.  When OFF,
+                        // simple rounding is used (faster, but more flat patches).
+                        if (layerHeight > 0 && heightDithering) {
+                            const errBuf = new Float64Array(boxW * boxH);
+
+                            for (let y = 0; y < boxH; y++) {
+                                // Serpentine scan: alternate direction each row
+                                // to prevent directional banding artifacts
+                                const ltr = y % 2 === 0;
+
+                                for (let xi = 0; xi < boxW; xi++) {
+                                    const x = ltr ? xi : boxW - 1 - xi;
+                                    const mi = y * boxW + x;
+
+                                    const continuous = pixelHeightMap[mi];
+                                    if (continuous <= 0) continue; // transparent
+
+                                    // Add accumulated error from neighbors
+                                    const adjusted = continuous + errBuf[mi];
+
+                                    // Snap to layer grid
+                                    const delta = Math.max(0, adjusted - slicerFirstLayerHeight);
+                                    let snapped =
+                                        slicerFirstLayerHeight +
+                                        Math.round(delta / layerHeight) * layerHeight;
+                                    snapped = Math.max(
+                                        slicerFirstLayerHeight,
+                                        Math.min(maxModelH, snapped)
+                                    );
+
+                                    pixelHeightMap[mi] = snapped;
+
+                                    // Quantization error
+                                    const err = adjusted - snapped;
+
+                                    // Floyd-Steinberg distribution (7/16, 3/16, 5/16, 1/16)
+                                    // Direction-aware for serpentine scan
+                                    const xFwd = ltr ? x + 1 : x - 1;
+                                    const xDiagFwd = ltr ? x + 1 : x - 1;
+                                    const xDiagBack = ltr ? x - 1 : x + 1;
+
+                                    if (xFwd >= 0 && xFwd < boxW)
+                                        errBuf[y * boxW + xFwd] += err * (7 / 16);
+                                    if (y + 1 < boxH) {
+                                        if (xDiagBack >= 0 && xDiagBack < boxW)
+                                            errBuf[(y + 1) * boxW + xDiagBack] += err * (3 / 16);
+                                        errBuf[(y + 1) * boxW + x] += err * (5 / 16);
+                                        if (xDiagFwd >= 0 && xDiagFwd < boxW)
+                                            errBuf[(y + 1) * boxW + xDiagFwd] += err * (1 / 16);
+                                    }
+                                }
+                            }
+                        } else if (layerHeight > 0) {
+                            // Simple grid snap without error diffusion
+                            for (let mi = 0; mi < boxW * boxH; mi++) {
+                                const h = pixelHeightMap[mi];
+                                if (h <= 0) continue;
+                                const delta = Math.max(0, h - slicerFirstLayerHeight);
+                                let snapped =
+                                    slicerFirstLayerHeight +
+                                    Math.round(delta / layerHeight) * layerHeight;
+                                snapped = Math.max(
+                                    slicerFirstLayerHeight,
+                                    Math.min(maxModelH, snapped)
+                                );
+                                pixelHeightMap[mi] = snapped;
+                            }
                         }
                     } else {
                         // === STANDARD: Luminance-based mapping ===
@@ -862,6 +922,7 @@ export default function ThreeDView({
         autoPaintEnabled,
         autoPaintTotalHeight,
         enhancedColorMatch,
+        heightDithering,
         cameraRef,
         controlsRef,
         materialRef,
