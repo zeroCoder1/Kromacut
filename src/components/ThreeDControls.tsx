@@ -84,6 +84,13 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         persisted?.paintMode ?? 'manual'
     );
     const [autoPaintMaxHeight, setAutoPaintMaxHeight] = useState<number | undefined>(undefined);
+    const [enhancedColorMatch, setEnhancedColorMatch] = useState(false);
+    const [allowRepeatedSwaps, setAllowRepeatedSwaps] = useState(false);
+
+    const handleEnhancedColorMatchChange = useCallback((v: boolean) => {
+        setEnhancedColorMatch(v);
+        if (!v) setAllowRepeatedSwaps(false);
+    }, []);
 
     useEffect(() => {
         savePrintSettingsToStorage({ layerHeight, slicerFirstLayerHeight, pixelSize });
@@ -255,6 +262,10 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                     autoPaintResult={autoPaintResult}
                     autoPaintSliceData={autoPaintSliceData}
                     filteredCount={filtered.length}
+                    enhancedColorMatch={enhancedColorMatch}
+                    setEnhancedColorMatch={handleEnhancedColorMatchChange}
+                    allowRepeatedSwaps={allowRepeatedSwaps}
+                    setAllowRepeatedSwaps={setAllowRepeatedSwaps}
                 />
 
                 {/* Manual Tab */}
