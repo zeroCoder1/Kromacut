@@ -445,6 +445,7 @@ function App(): React.ReactElement | null {
                                     rebuildSignal={threeDBuildSignal}
                                     autoPaintEnabled={threeDState.paintMode === 'autopaint'}
                                     autoPaintTotalHeight={threeDState.autoPaintResult?.totalHeight}
+                                    enhancedColorMatch={threeDState.enhancedColorMatch}
                                 />
                             )}
                             <PreviewActions

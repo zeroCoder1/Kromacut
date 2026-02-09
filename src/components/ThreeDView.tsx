@@ -19,6 +19,7 @@ interface ThreeDViewProps {
     // Auto-paint mode props
     autoPaintEnabled?: boolean;
     autoPaintTotalHeight?: number; // Total model height when auto-paint is enabled
+    enhancedColorMatch?: boolean; // Use color-distance mapping instead of luminance
 }
 
 // Convert hex color to RGB tuple
@@ -77,6 +78,7 @@ export default function ThreeDView({
     rebuildSignal = 0,
     autoPaintEnabled = false,
     autoPaintTotalHeight,
+    enhancedColorMatch = false,
 }: ThreeDViewProps) {
     const mountRef = useRef<HTMLDivElement | null>(null);
     const [isBuilding, setIsBuilding] = useState(false);
@@ -200,27 +202,8 @@ export default function ThreeDView({
 
                 if (autoPaintEnabled && autoPaintTotalHeight && autoPaintTotalHeight > 0) {
                     // === AUTO-PAINT MODE ===
-                    // Build layers based on luminance ranges
 
-                    // First, find the luminance range of the image
-                    let minLum = 1,
-                        maxLum = 0;
-                    for (let py = minY; py < minY + boxH; py++) {
-                        for (let px = minX; px < minX + boxW; px++) {
-                            const idx = (py * fullW + px) * 4;
-                            const a = data[idx + 3];
-                            if (a > 0) {
-                                const lum = getLuminance(data[idx], data[idx + 1], data[idx + 2]);
-                                minLum = Math.min(minLum, lum);
-                                maxLum = Math.max(maxLum, lum);
-                            }
-                        }
-                        pushProgress((py - minY + 1) / totalUnits);
-                    }
-                    if (maxLum <= minLum) maxLum = minLum + 0.001;
-
-                    // Build layers from the colorSliceHeights (which are now the auto-paint layers)
-                    // Each layer has a color (from swatches) and a cumulative height
+                    // Build layers from the colorSliceHeights
                     const cumulativeHeights: number[] = [];
                     let running = 0;
                     colorOrder.forEach((fi, pos) => {
@@ -229,6 +212,329 @@ export default function ThreeDView({
                         running += eff;
                         cumulativeHeights[pos] = running;
                     });
+
+                    // Precompute pixel height map (same size as image crop)
+                    // This avoids recomputing per-layer
+                    const pixelHeightMap = new Float32Array(boxW * boxH);
+
+                    if (enhancedColorMatch) {
+                        // === ENHANCED: Polyline projection in Lab color space ===
+                        // The virtual swatches trace a path (polyline) through
+                        // CIE-Lab space, parameterized by height.  For each image
+                        // pixel we find the nearest point on this polyline via
+                        // segment projection, yielding a continuous height that
+                        // varies smoothly even among similar colors.
+                        //
+                        // Flat zones (consecutive identical-color swatches from
+                        // the same filament) are collapsed into single nodes with
+                        // a height *range*.  Within these ranges we fall back to
+                        // luminance-based sub-detail, preserving surface texture
+                        // without affecting color accuracy (the printed color is
+                        // constant across the flat zone).
+
+                        // Inline sRGB -> Lab conversion helper
+                        const toLab = (
+                            sr: number,
+                            sg: number,
+                            sb: number
+                        ): { L: number; a: number; b: number } => {
+                            let rr = sr / 255,
+                                gg = sg / 255,
+                                bb = sb / 255;
+                            rr = rr > 0.04045 ? Math.pow((rr + 0.055) / 1.055, 2.4) : rr / 12.92;
+                            gg = gg > 0.04045 ? Math.pow((gg + 0.055) / 1.055, 2.4) : gg / 12.92;
+                            bb = bb > 0.04045 ? Math.pow((bb + 0.055) / 1.055, 2.4) : bb / 12.92;
+                            rr *= 100;
+                            gg *= 100;
+                            bb *= 100;
+                            let x = rr * 0.4124564 + gg * 0.3575761 + bb * 0.1804375;
+                            let y = rr * 0.2126729 + gg * 0.7151522 + bb * 0.072175;
+                            let z = rr * 0.0193339 + gg * 0.119192 + bb * 0.9503041;
+                            x /= 95.047;
+                            y /= 100.0;
+                            z /= 108.883;
+                            x = x > 0.008856 ? Math.cbrt(x) : (903.3 * x + 16) / 116;
+                            y = y > 0.008856 ? Math.cbrt(y) : (903.3 * y + 16) / 116;
+                            z = z > 0.008856 ? Math.cbrt(z) : (903.3 * z + 16) / 116;
+                            return {
+                                L: 116 * y - 16,
+                                a: 500 * (x - y),
+                                b: 200 * (y - z),
+                            };
+                        };
+
+                        // Pre-compute Lab + cumulative height for every virtual swatch
+                        const swatchEntries: Array<{
+                            lab: { L: number; a: number; b: number };
+                            height: number;
+                        }> = [];
+                        for (let si = 0; si < swatches.length; si++) {
+                            const rgb = hexToRGB(swatches[si].hex);
+                            swatchEntries.push({
+                                lab: toLab(rgb[0], rgb[1], rgb[2]),
+                                height: cumulativeHeights[si] || 0,
+                            });
+                        }
+
+                        // --- Collapse consecutive same-color runs into polyline nodes ---
+                        // Only truly identical colors collapse (DeltaE < 0.5).
+                        // Each node keeps its height range so flat zones can use
+                        // luminance for sub-detail.
+                        const polyNodes: Array<{
+                            lab: { L: number; a: number; b: number };
+                            minHeight: number;
+                            maxHeight: number;
+                        }> = [];
+                        const COLLAPSE_DE_SQ = 0.25; // 0.5^2 -- very conservative
+                        if (swatchEntries.length > 0) {
+                            let runStart = 0;
+                            for (let si = 1; si <= swatchEntries.length; si++) {
+                                let split = si === swatchEntries.length;
+                                if (!split) {
+                                    const ref = swatchEntries[runStart].lab;
+                                    const cur = swatchEntries[si].lab;
+                                    const deSq =
+                                        (cur.L - ref.L) ** 2 +
+                                        (cur.a - ref.a) ** 2 +
+                                        (cur.b - ref.b) ** 2;
+                                    split = deSq >= COLLAPSE_DE_SQ;
+                                }
+                                if (split) {
+                                    // Average Lab over the run
+                                    let sL = 0,
+                                        sa = 0,
+                                        sb = 0;
+                                    const cnt = si - runStart;
+                                    for (let j = runStart; j < si; j++) {
+                                        sL += swatchEntries[j].lab.L;
+                                        sa += swatchEntries[j].lab.a;
+                                        sb += swatchEntries[j].lab.b;
+                                    }
+                                    polyNodes.push({
+                                        lab: { L: sL / cnt, a: sa / cnt, b: sb / cnt },
+                                        minHeight: swatchEntries[runStart].height,
+                                        maxHeight: swatchEntries[si - 1].height,
+                                    });
+                                    runStart = si;
+                                }
+                            }
+                        }
+
+                        // --- Pre-compute transition segments between consecutive nodes ---
+                        // A segment connects the END of one flat zone to the START of
+                        // the next, tracing the color-blend path through Lab space.
+                        const polySegs: Array<{
+                            aL: number;
+                            aa: number;
+                            ab: number;
+                            dL: number;
+                            da: number;
+                            db: number;
+                            lenSq: number;
+                            hStart: number;
+                            hEnd: number;
+                        }> = [];
+                        for (let ni = 0; ni < polyNodes.length - 1; ni++) {
+                            const A = polyNodes[ni],
+                                B = polyNodes[ni + 1];
+                            const dL = B.lab.L - A.lab.L;
+                            const da = B.lab.a - A.lab.a;
+                            const db = B.lab.b - A.lab.b;
+                            polySegs.push({
+                                aL: A.lab.L,
+                                aa: A.lab.a,
+                                ab: A.lab.b,
+                                dL,
+                                da,
+                                db,
+                                lenSq: dL * dL + da * da + db * db,
+                                hStart: A.maxHeight, // transition begins at end of A
+                                hEnd: B.minHeight, // transition ends at start of B
+                            });
+                        }
+
+                        // Pre-scan image luminance range for flat-zone sub-detail
+                        let imgMinLum = 1,
+                            imgMaxLum = 0;
+                        for (let py = minY; py < minY + boxH; py++) {
+                            for (let px = minX; px < minX + boxW; px++) {
+                                const idx = (py * fullW + px) * 4;
+                                if (data[idx + 3] === 0) continue;
+                                const lum = getLuminance(data[idx], data[idx + 1], data[idx + 2]);
+                                if (lum < imgMinLum) imgMinLum = lum;
+                                if (lum > imgMaxLum) imgMaxLum = lum;
+                            }
+                        }
+                        if (imgMaxLum <= imgMinLum) imgMaxLum = imgMinLum + 0.001;
+                        const imgLumRange = imgMaxLum - imgMinLum;
+
+                        const maxModelH = cumulativeHeights[cumulativeHeights.length - 1] || 1;
+                        const minModelH = cumulativeHeights[0] || 0;
+
+                        // Cache: pixel RGB key -> height
+                        const colorHeightCache = new Map<number, number>();
+
+                        for (let py = minY; py < minY + boxH; py++) {
+                            for (let px = minX; px < minX + boxW; px++) {
+                                const idx = (py * fullW + px) * 4;
+                                const a = data[idx + 3];
+                                const mapIdx = (py - minY) * boxW + (px - minX);
+                                if (a === 0) {
+                                    pixelHeightMap[mapIdx] = 0;
+                                    continue;
+                                }
+
+                                const pr = data[idx],
+                                    pg = data[idx + 1],
+                                    pb = data[idx + 2];
+                                const cacheKey =
+                                    ((pr & 0xff) << 16) | ((pg & 0xff) << 8) | (pb & 0xff);
+                                const cached = colorHeightCache.get(cacheKey);
+                                if (cached !== undefined) {
+                                    pixelHeightMap[mapIdx] = cached;
+                                    continue;
+                                }
+
+                                const pLab = toLab(pr, pg, pb);
+
+                                let bestDist = Infinity;
+                                let targetHeight = 0;
+
+                                // --- Match against flat-zone nodes ---
+                                for (let ni = 0; ni < polyNodes.length; ni++) {
+                                    const nd = polyNodes[ni];
+                                    const dist = Math.sqrt(
+                                        (pLab.L - nd.lab.L) ** 2 +
+                                            (pLab.a - nd.lab.a) ** 2 +
+                                            (pLab.b - nd.lab.b) ** 2
+                                    );
+                                    if (dist < bestDist) {
+                                        bestDist = dist;
+                                        const range = nd.maxHeight - nd.minHeight;
+                                        if (range > 1e-6) {
+                                            // Flat zone: use image-relative luminance
+                                            // for surface texture sub-detail
+                                            const lum = getLuminance(pr, pg, pb);
+                                            const lumT = (lum - imgMinLum) / imgLumRange;
+                                            targetHeight = nd.minHeight + lumT * range;
+                                        } else {
+                                            targetHeight = (nd.minHeight + nd.maxHeight) * 0.5;
+                                        }
+                                    }
+                                }
+
+                                // --- Match against transition segments ---
+                                // Project pixel onto each segment in Lab space.
+                                // The projection gives a fractional position t in
+                                // [0,1] along the segment, which maps to a height
+                                // between the two nodes.
+                                for (let si = 0; si < polySegs.length; si++) {
+                                    const seg = polySegs[si];
+                                    if (seg.lenSq < 0.01) continue; // degenerate
+
+                                    // Projection: t = dot(P-A, B-A) / |B-A|^2
+                                    const pL = pLab.L - seg.aL;
+                                    const pa = pLab.a - seg.aa;
+                                    const pba = pLab.b - seg.ab;
+                                    let t = (pL * seg.dL + pa * seg.da + pba * seg.db) / seg.lenSq;
+                                    t = Math.max(0, Math.min(1, t));
+
+                                    // Distance from pixel to projected point
+                                    const projL = seg.aL + t * seg.dL;
+                                    const proja = seg.aa + t * seg.da;
+                                    const projb = seg.ab + t * seg.db;
+                                    const dist = Math.sqrt(
+                                        (pLab.L - projL) ** 2 +
+                                            (pLab.a - proja) ** 2 +
+                                            (pLab.b - projb) ** 2
+                                    );
+
+                                    if (dist < bestDist) {
+                                        bestDist = dist;
+                                        targetHeight = seg.hStart + t * (seg.hEnd - seg.hStart);
+                                    }
+                                }
+
+                                // Clamp to model bounds
+                                targetHeight = Math.max(
+                                    minModelH,
+                                    Math.min(maxModelH, targetHeight)
+                                );
+
+                                // Snap to layer height grid
+                                if (layerHeight > 0) {
+                                    const delta = Math.max(
+                                        0,
+                                        targetHeight - slicerFirstLayerHeight
+                                    );
+                                    targetHeight =
+                                        slicerFirstLayerHeight +
+                                        Math.round(delta / layerHeight) * layerHeight;
+                                    targetHeight = Math.max(slicerFirstLayerHeight, targetHeight);
+                                }
+
+                                pixelHeightMap[mapIdx] = targetHeight;
+                                colorHeightCache.set(cacheKey, targetHeight);
+                            }
+                            pushProgress((py - minY + 1) / totalUnits);
+                        }
+                    } else {
+                        // === STANDARD: Luminance-based mapping ===
+                        // First, find the luminance range of the image
+                        let minLum = 1,
+                            maxLum = 0;
+                        for (let py = minY; py < minY + boxH; py++) {
+                            for (let px = minX; px < minX + boxW; px++) {
+                                const idx = (py * fullW + px) * 4;
+                                const a = data[idx + 3];
+                                if (a > 0) {
+                                    const lum = getLuminance(
+                                        data[idx],
+                                        data[idx + 1],
+                                        data[idx + 2]
+                                    );
+                                    minLum = Math.min(minLum, lum);
+                                    maxLum = Math.max(maxLum, lum);
+                                }
+                            }
+                        }
+                        if (maxLum <= minLum) maxLum = minLum + 0.001;
+
+                        for (let py = minY; py < minY + boxH; py++) {
+                            for (let px = minX; px < minX + boxW; px++) {
+                                const idx = (py * fullW + px) * 4;
+                                const a = data[idx + 3];
+                                const mapIdx = (py - minY) * boxW + (px - minX);
+                                if (a === 0) {
+                                    pixelHeightMap[mapIdx] = 0;
+                                    continue;
+                                }
+
+                                const lum = getLuminance(data[idx], data[idx + 1], data[idx + 2]);
+                                const normalizedLum = (lum - minLum) / (maxLum - minLum);
+
+                                const firstLayerH = Math.max(
+                                    slicerFirstLayerHeight,
+                                    colorSliceHeights[colorOrder[0]] || slicerFirstLayerHeight
+                                );
+                                let pixelHeight =
+                                    firstLayerH +
+                                    normalizedLum * (autoPaintTotalHeight - firstLayerH);
+
+                                // Snap to layer height grid
+                                if (layerHeight > 0) {
+                                    const delta = Math.max(0, pixelHeight - slicerFirstLayerHeight);
+                                    pixelHeight =
+                                        slicerFirstLayerHeight +
+                                        Math.round(delta / layerHeight) * layerHeight;
+                                    pixelHeight = Math.max(slicerFirstLayerHeight, pixelHeight);
+                                }
+
+                                pixelHeightMap[mapIdx] = pixelHeight;
+                            }
+                            pushProgress((py - minY + 1) / totalUnits);
+                        }
+                    }
 
                     // For each layer, find pixels whose target height falls within this layer
                     for (let i = 0; i < colorOrder.length; i++) {
@@ -246,60 +552,21 @@ export default function ThreeDView({
                                 : colorSliceHeights[swatchIdx] || 0;
                         if (thickness <= 0.0001) continue;
 
-                        const baseZ = i === 0 ? 0 : cumulativeHeights[i - 1];
                         const topZ = cumulativeHeights[i];
+                        const baseZ = i === 0 ? 0 : cumulativeHeights[i - 1];
 
-                        // Identify active pixels for this layer
-                        // A pixel is active if its height extends THROUGH this entire layer
-                        // (pixelHeight >= topZ means the pixel column reaches at least to the top of this layer)
+                        // Identify active pixels for this layer using precomputed height map
                         const activePixels = new Uint8Array(boxW * boxH);
                         let activeCount = 0;
 
                         for (let y = 0; y < boxH; y++) {
                             for (let x = 0; x < boxW; x++) {
-                                const px = minX + x;
-                                const py = minY + y;
-                                const idx = (py * fullW + px) * 4;
-                                const a = data[idx + 3];
+                                const mapIdx = y * boxW + x;
+                                const pixelHeight = pixelHeightMap[mapIdx];
 
-                                if (a > 0) {
-                                    const lum = getLuminance(
-                                        data[idx],
-                                        data[idx + 1],
-                                        data[idx + 2]
-                                    );
-                                    const normalizedLum = (lum - minLum) / (maxLum - minLum);
-
-                                    // Map luminance to height:
-                                    // - Darkest pixels get height = first layer (base only)
-                                    // - Lightest pixels get height = autoPaintTotalHeight (all layers)
-                                    const firstLayerH = Math.max(
-                                        slicerFirstLayerHeight,
-                                        colorSliceHeights[colorOrder[0]] || slicerFirstLayerHeight
-                                    );
-                                    let pixelHeight =
-                                        firstLayerH +
-                                        normalizedLum * (autoPaintTotalHeight - firstLayerH);
-
-                                    // Snap to layer height grid
-                                    if (layerHeight > 0) {
-                                        const delta = Math.max(
-                                            0,
-                                            pixelHeight - slicerFirstLayerHeight
-                                        );
-                                        pixelHeight =
-                                            slicerFirstLayerHeight +
-                                            Math.round(delta / layerHeight) * layerHeight;
-                                        pixelHeight = Math.max(slicerFirstLayerHeight, pixelHeight);
-                                    }
-
-                                    // Include this pixel if its height extends THROUGH this layer
-                                    // pixelHeight >= topZ means the column reaches the top of this layer
-                                    // This creates the graduated effect: higher layers have fewer pixels
-                                    if (pixelHeight >= topZ - 0.001) {
-                                        activePixels[(boxH - 1 - y) * boxW + x] = 1;
-                                        activeCount++;
-                                    }
+                                if (pixelHeight > 0 && pixelHeight >= topZ - 0.001) {
+                                    activePixels[(boxH - 1 - y) * boxW + x] = 1;
+                                    activeCount++;
                                 }
                             }
 
@@ -594,6 +861,7 @@ export default function ThreeDView({
         rebuildSignal,
         autoPaintEnabled,
         autoPaintTotalHeight,
+        enhancedColorMatch,
         cameraRef,
         controlsRef,
         materialRef,

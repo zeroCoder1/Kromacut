@@ -126,12 +126,26 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         }
         return generateAutoLayers(
             filaments,
-            filtered.map((s) => ({ hex: s.hex })),
+            filtered.map((s) => ({
+                hex: s.hex,
+                count: (s as Record<string, unknown>).count as number | undefined,
+            })),
             layerHeight,
             slicerFirstLayerHeight,
-            autoPaintMaxHeight
+            autoPaintMaxHeight,
+            enhancedColorMatch,
+            allowRepeatedSwaps
         );
-    }, [paintMode, filaments, filtered, layerHeight, slicerFirstLayerHeight, autoPaintMaxHeight]);
+    }, [
+        paintMode,
+        filaments,
+        filtered,
+        layerHeight,
+        slicerFirstLayerHeight,
+        autoPaintMaxHeight,
+        enhancedColorMatch,
+        allowRepeatedSwaps,
+    ]);
 
     const autoPaintSliceData = useMemo(() => {
         if (!autoPaintResult) return undefined;
@@ -163,6 +177,8 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                 pixelSize,
                 filaments,
                 paintMode,
+                enhancedColorMatch,
+                allowRepeatedSwaps,
                 autoPaintResult,
                 autoPaintSwatches: autoPaintSliceData.virtualSwatches,
                 autoPaintFilamentSwatches: autoPaintSliceData.filamentSwatches,
@@ -189,6 +205,8 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         pixelSize,
         filaments,
         paintMode,
+        enhancedColorMatch,
+        allowRepeatedSwaps,
         autoPaintResult,
         autoPaintSliceData,
     ]);
