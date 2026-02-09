@@ -64,6 +64,8 @@ interface AutoPaintTabProps {
     setEnhancedColorMatch: (v: boolean) => void;
     allowRepeatedSwaps: boolean;
     setAllowRepeatedSwaps: (v: boolean) => void;
+    heightDithering: boolean;
+    setHeightDithering: (v: boolean) => void;
 }
 
 export default function AutoPaintTab({
@@ -95,6 +97,8 @@ export default function AutoPaintTab({
     setEnhancedColorMatch,
     allowRepeatedSwaps,
     setAllowRepeatedSwaps,
+    heightDithering,
+    setHeightDithering,
 }: AutoPaintTabProps) {
     return (
         <TabsContent value="autopaint" forceMount className="data-[state=inactive]:hidden">
@@ -381,6 +385,22 @@ export default function AutoPaintTab({
                                     id="allow-repeated-swaps"
                                     checked={allowRepeatedSwaps}
                                     onCheckedChange={setAllowRepeatedSwaps}
+                                    disabled={!enhancedColorMatch}
+                                />
+                            </div>
+                            <div
+                                className={`flex items-center justify-between transition-opacity ${enhancedColorMatch ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}
+                            >
+                                <Label
+                                    htmlFor="height-dithering"
+                                    className="text-xs font-medium text-foreground cursor-pointer"
+                                >
+                                    Height dithering
+                                </Label>
+                                <Switch
+                                    id="height-dithering"
+                                    checked={heightDithering}
+                                    onCheckedChange={setHeightDithering}
                                     disabled={!enhancedColorMatch}
                                 />
                             </div>
