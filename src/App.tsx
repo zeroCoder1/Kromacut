@@ -26,6 +26,7 @@ import { useProcessingState } from './hooks/useProcessingState';
 import { useBuildWarning } from './hooks/useBuildWarning';
 import ResizableSplitter from './components/ResizableSplitter';
 import { ControlsPanel } from './components/ControlsPanel';
+import { usePaletteManager } from './hooks/usePaletteManager';
 import {
     AlertDialog,
     AlertDialogContent,
@@ -80,8 +81,20 @@ function App(): React.ReactElement | null {
     const [finalColors, setFinalColors] = useState<number>(16);
     const [algorithm, setAlgorithm] = useState<string>('kmeans');
     const SWATCH_CAP = 2 ** 10;
-    // default to the Auto palette
-    const [selectedPalette, setSelectedPalette] = useState<string>('auto');
+    // Palette manager: custom palettes CRUD + merged palette list + selected palette
+    const {
+        customPalettes,
+        allPalettes,
+        selectedPalette,
+        setSelectedPalette,
+        importFeedback: paletteImportFeedback,
+        importInputRef: paletteImportInputRef,
+        handleCreatePalette,
+        handleUpdatePalette,
+        handleDeletePalette,
+        handleExportPalette,
+        handleImportFile: handleImportPaletteFile,
+    } = usePaletteManager();
     const { imageSrc, setImage, clearCurrent, undo, redo, canUndo, canRedo } = useImageHistory(
         logo,
         undefined
@@ -111,6 +124,7 @@ function App(): React.ReactElement | null {
         weight,
         finalColors,
         selectedPalette,
+        customPalettes,
         imageSrc,
         setImage: (u, push = true) => {
             invalidate();
@@ -358,6 +372,15 @@ function App(): React.ReactElement | null {
                                                 setAlgorithm('kmeans');
                                                 setSelectedPalette('auto');
                                             }}
+                                            allPalettes={allPalettes}
+                                            customPalettes={customPalettes}
+                                            importFeedback={paletteImportFeedback}
+                                            importInputRef={paletteImportInputRef}
+                                            onCreatePalette={handleCreatePalette}
+                                            onUpdatePalette={handleUpdatePalette}
+                                            onDeletePalette={handleDeletePalette}
+                                            onExportPalette={handleExportPalette}
+                                            onImportPaletteFile={handleImportPaletteFile}
                                         />
                                         <SwatchesPanel
                                             swatches={swatches}

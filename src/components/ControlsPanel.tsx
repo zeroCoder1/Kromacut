@@ -12,6 +12,9 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { PALETTES } from '../data/palettes';
+import type { MergedPalette } from '../hooks/usePaletteManager';
+import type { CustomPalette } from '../types';
+import { PaletteManager } from './PaletteManager';
 
 interface Props {
     finalColors: number;
@@ -27,6 +30,16 @@ interface Props {
     onPaletteSelect: (id: string, size: number) => void;
     applying?: boolean;
     onReset?: () => void;
+    // Palette manager props
+    allPalettes: MergedPalette[];
+    customPalettes: CustomPalette[];
+    importFeedback: string | null;
+    importInputRef: React.RefObject<HTMLInputElement | null>;
+    onCreatePalette: (name: string, colors: string[]) => void;
+    onUpdatePalette: (id: string, patch: { name?: string; colors?: string[] }) => void;
+    onDeletePalette: (id: string) => void;
+    onExportPalette: (id: string) => void;
+    onImportPaletteFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
 export const ControlsPanel: React.FC<Props> = ({
@@ -43,6 +56,15 @@ export const ControlsPanel: React.FC<Props> = ({
     onPaletteSelect,
     applying = false,
     onReset,
+    allPalettes,
+    customPalettes,
+    importFeedback,
+    importInputRef,
+    onCreatePalette,
+    onUpdatePalette,
+    onDeletePalette,
+    onExportPalette,
+    onImportPaletteFile,
 }) => {
     // Local state for relaxed typing
     const [localColors, setLocalColors] = useState(finalColors);
@@ -58,14 +80,19 @@ export const ControlsPanel: React.FC<Props> = ({
     }, [weight]);
 
     const allDefault =
-        finalColors === 16 && weight === 128 && algorithm === 'kmeans' && selectedPalette === 'auto';
+        finalColors === 16 &&
+        weight === 128 &&
+        algorithm === 'kmeans' &&
+        selectedPalette === 'auto';
 
     return (
         <Card className="p-4 border border-border/50 space-y-4">
             <div>
                 <div className="flex items-start justify-between gap-2">
                     <div className="space-y-1">
-                        <h3 className="text-sm font-semibold text-foreground">Quantization Settings</h3>
+                        <h3 className="text-sm font-semibold text-foreground">
+                            Quantization Settings
+                        </h3>
                         <p className="text-xs text-muted-foreground">
                             Configure palette and reduce colors
                         </p>
@@ -92,7 +119,7 @@ export const ControlsPanel: React.FC<Props> = ({
                         <Select
                             value={selectedPalette}
                             onValueChange={(paletteId) => {
-                                const palette = PALETTES.find((p) => p.id === paletteId);
+                                const palette = allPalettes.find((p) => p.id === paletteId);
                                 if (palette) {
                                     onPaletteSelect(paletteId, palette.size);
                                 }
@@ -134,8 +161,57 @@ export const ControlsPanel: React.FC<Props> = ({
                                         </div>
                                     </SelectItem>
                                 ))}
+                                {customPalettes.length > 0 && (
+                                    <>
+                                        <div className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider select-none border-t border-border/50 mt-1 pt-2">
+                                            Custom Palettes
+                                        </div>
+                                        {customPalettes.map((cp) => (
+                                            <SelectItem key={cp.id} value={cp.id}>
+                                                <div className="flex items-center gap-2">
+                                                    <span>
+                                                        {cp.name} ({cp.colors.length})
+                                                    </span>
+                                                    <div className="flex gap-1">
+                                                        {cp.colors
+                                                            .slice(0, 5)
+                                                            .map((c: string, i: number) => (
+                                                                <div
+                                                                    key={i}
+                                                                    className="rounded border border-border/70 select-none"
+                                                                    style={{
+                                                                        background: c,
+                                                                        width: '15px',
+                                                                        height: '15px',
+                                                                        aspectRatio: '1',
+                                                                    }}
+                                                                />
+                                                            ))}
+                                                        {cp.colors.length > 5 && (
+                                                            <div className="text-xs text-muted-foreground">
+                                                                +{cp.colors.length - 5}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </SelectItem>
+                                        ))}
+                                    </>
+                                )}
                             </SelectContent>
                         </Select>
+                        <PaletteManager
+                            customPalettes={customPalettes}
+                            allPalettes={allPalettes}
+                            selectedPalette={selectedPalette}
+                            importFeedback={importFeedback}
+                            importInputRef={importInputRef}
+                            onCreatePalette={onCreatePalette}
+                            onUpdatePalette={onUpdatePalette}
+                            onDeletePalette={onDeletePalette}
+                            onExportPalette={onExportPalette}
+                            onImportFile={onImportPaletteFile}
+                        />
                     </div>
                     <div className="space-y-2">
                         <div className="flex justify-between items-center">
