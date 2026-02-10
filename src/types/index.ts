@@ -2,6 +2,15 @@ import type { AutoPaintResult } from '../lib/autoPaint';
 
 export type Swatch = { hex: string; a: number };
 
+export interface CustomPalette {
+    id: string;
+    name: string;
+    version: number;
+    colors: string[];
+    createdAt: number;
+    updatedAt: number;
+}
+
 export interface Filament {
     id: string;
     color: string;

@@ -8,6 +8,7 @@ import {
     mapImageToPalette,
 } from '../lib/algorithms';
 import { PALETTES } from '../data/palettes';
+import type { CustomPalette } from '../types';
 import { rgbToHsl } from '../lib/color';
 import type { CanvasPreviewHandle } from '../components/CanvasPreview';
 
@@ -16,6 +17,7 @@ interface Params {
     weight: number;
     finalColors: number;
     selectedPalette: string;
+    customPalettes: CustomPalette[];
     imageSrc: string | null;
     setImage: (url: string | null, pushHistory?: boolean) => void;
     onImmediateSwatches: (
@@ -35,6 +37,7 @@ export function useQuantize({
     weight,
     finalColors,
     selectedPalette,
+    customPalettes,
     imageSrc,
     setImage,
     onImmediateSwatches,
@@ -120,9 +123,12 @@ export function useQuantize({
             mapImageToPalette(data, overridePalette);
             ctx.putImageData(data, 0, 0);
         } else if (selectedPalette && selectedPalette !== 'auto') {
-            const pal = PALETTES.find((p) => p.id === selectedPalette);
-            if (pal && pal.colors && pal.colors.length > 0) {
-                mapImageToPalette(data, pal.colors);
+            // Search built-in palettes first, then custom palettes
+            const builtIn = PALETTES.find((p) => p.id === selectedPalette);
+            const palColors =
+                builtIn?.colors ?? customPalettes.find((p) => p.id === selectedPalette)?.colors;
+            if (palColors && palColors.length > 0) {
+                mapImageToPalette(data, palColors);
                 ctx.putImageData(data, 0, 0);
             }
         } else {
