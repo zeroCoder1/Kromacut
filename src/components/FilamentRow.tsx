@@ -49,7 +49,7 @@ const FilamentRow = React.memo(function FilamentRow({
             setLocalTd(filament.td.toString());
             return;
         }
-        val = Math.min(10, Math.max(0.1, val));
+        val = Math.min(100, Math.max(0.1, val));
         onUpdate(filament.id, { td: val });
         setLocalTd(val.toString());
     };
@@ -95,7 +95,7 @@ const FilamentRow = React.memo(function FilamentRow({
                     <Input
                         type="number"
                         min={0.1}
-                        max={10}
+                        max={100}
                         step={0.1}
                         value={localTd}
                         onChange={(e) => setLocalTd(e.target.value)}
