@@ -1,8 +1,102 @@
 // Lightweight image algorithms for Kromacut
 // Each function operates on an ImageData instance and returns the modified ImageData.
 
-export function posterizeImageData(data: ImageData, weight: number): ImageData {
+/** Options accepted by all async algorithm functions. */
+export interface AlgoOptions {
+    /** Called with a 0..1 value representing sub-step progress within the algorithm. */
+    onProgress?: (value: number) => void;
+}
+
+/**
+ * Timer-based yield helper.  Checks if enough wall-clock time has elapsed
+ * since the last yield; if so, yields to the event loop via setTimeout(0)
+ * so the browser can paint frames and the progress bar can update.
+ */
+function createYielder(intervalMs = 30) {
+    let last = performance.now();
+    return async () => {
+        const now = performance.now();
+        if (now - last >= intervalMs) {
+            await new Promise<void>((r) => setTimeout(r, 0));
+            last = performance.now();
+        }
+    };
+}
+
+/**
+ * Async pixel-loop helper: build a histogram of unique opaque colors.
+ * Yields periodically so the UI stays responsive.
+ */
+async function buildHistogramAsync(
+    d: Uint8ClampedArray,
+    onProgress?: (frac: number) => void,
+) {
+    const maybeYield = createYielder();
+    const map = new Map<number, number>();
+    const total = d.length / 4;
+    for (let i = 0; i < d.length; i += 4) {
+        const a = d[i + 3];
+        if (a !== 0) {
+            const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
+            map.set(key, (map.get(key) || 0) + 1);
+        }
+        if ((i & 0x3fffc) === 0) { // every ~65k pixels
+            onProgress?.((i / 4) / total);
+            await maybeYield();
+        }
+    }
+    onProgress?.(1);
+    return map;
+}
+
+/**
+ * Async pixel-loop helper: apply a color lookup map to every pixel.
+ * Yields periodically so the UI stays responsive.
+ */
+async function applyLookupAsync(
+    d: Uint8ClampedArray,
+    lookup: Map<number, [number, number, number]>,
+    onProgress?: (frac: number) => void,
+) {
+    const maybeYield = createYielder();
+    const total = d.length / 4;
+    for (let i = 0; i < d.length; i += 4) {
+        const a = d[i + 3];
+        if (a !== 0) {
+            const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
+            const v = lookup.get(key);
+            if (v) {
+                d[i] = v[0];
+                d[i + 1] = v[1];
+                d[i + 2] = v[2];
+            }
+        }
+        if ((i & 0x3fffc) === 0) {
+            onProgress?.((i / 4) / total);
+            await maybeYield();
+        }
+    }
+    onProgress?.(1);
+}
+
+/** Convert a histogram Map into the entry array used by all algorithms. */
+function histogramToEntries(map: Map<number, number>) {
+    const entries: { key: number; r: number; g: number; b: number; count: number }[] = [];
+    map.forEach((count, key) => {
+        entries.push({
+            key,
+            r: (key >> 16) & 0xff,
+            g: (key >> 8) & 0xff,
+            b: key & 0xff,
+            count,
+        });
+    });
+    return entries;
+}
+
+export async function posterizeImageData(data: ImageData, weight: number, opts?: AlgoOptions): Promise<ImageData> {
     const d = data.data;
+    const maybeYield = createYielder();
     // sanitize and clamp
     weight = Math.max(2, Math.min(256, Math.floor(weight)));
 
@@ -13,13 +107,19 @@ export function posterizeImageData(data: ImageData, weight: number): ImageData {
         const levels = weight;
         const steps = Math.max(0, levels - 1);
         const scale = steps > 0 ? 255 / steps : 0;
+        const total = d.length / 4;
         for (let i = 0; i < d.length; i += 4) {
             const l = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
             const idx = steps > 0 ? Math.round((l * steps) / 255) : 0;
             const v = Math.round(idx * scale);
             d[i] = d[i + 1] = d[i + 2] = v;
+            if ((i & 0x3fffc) === 0) {
+                opts?.onProgress?.(0.5 * (i / 4) / total);
+                await maybeYield();
+            }
         }
-        return enforcePaletteSize(data, weight);
+        opts?.onProgress?.(0.5);
+        return enforcePaletteSizeAsync(data, weight, (f) => opts?.onProgress?.(0.5 + f * 0.5));
     }
 
     // For larger palettes, distribute levels across R/G/B trying to get
@@ -46,6 +146,7 @@ export function posterizeImageData(data: ImageData, weight: number): ImageData {
     const stepsArr = levels.map((l) => Math.max(0, l - 1));
     const scales = stepsArr.map((s) => (s > 0 ? 255 / s : 0));
 
+    const total = d.length / 4;
     for (let i = 0; i < d.length; i += 4) {
         // quantize each channel independently; if a channel has only one
         // level (steps === 0) map to mid-range (128) to avoid pushing the
@@ -61,9 +162,14 @@ export function posterizeImageData(data: ImageData, weight: number): ImageData {
             }
         }
         // leave alpha untouched
+        if ((i & 0x3fffc) === 0) {
+            opts?.onProgress?.(0.5 * (i / 4) / total);
+            await maybeYield();
+        }
     }
 
-    return enforcePaletteSize(data, weight);
+    opts?.onProgress?.(0.5);
+    return enforcePaletteSizeAsync(data, weight, (f) => opts?.onProgress?.(0.5 + f * 0.5));
 }
 
 /**
@@ -71,39 +177,20 @@ export function posterizeImageData(data: ImageData, weight: number): ImageData {
  * by recursively splitting color boxes along the longest channel at the
  * pixel-count median. Operates on ImageData in-place and returns it.
  */
-export function medianCutImageData(data: ImageData, weight: number): ImageData {
+export async function medianCutImageData(data: ImageData, weight: number, opts?: AlgoOptions): Promise<ImageData> {
     const d = data.data;
     weight = Math.max(2, Math.min(256, Math.floor(weight)));
 
     // Build histogram of unique colors to reduce work
-    const map = new Map<number, number>();
-    for (let i = 0; i < d.length; i += 4) {
-        const a = d[i + 3];
-        if (a === 0) continue; // ignore fully transparent pixels
-        const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
-        map.set(key, (map.get(key) || 0) + 1);
-    }
+    const map = await buildHistogramAsync(d, (f) => opts?.onProgress?.(f * 0.2));
 
-    const entries: {
-        key: number;
-        r: number;
-        g: number;
-        b: number;
-        count: number;
-    }[] = [];
-    entries.length = 0;
-    map.forEach((count, key) => {
-        const r = (key >> 16) & 0xff;
-        const g = (key >> 8) & 0xff;
-        const b = key & 0xff;
-        entries.push({ key, r, g, b, count });
-    });
+    const entries = histogramToEntries(map);
 
     if (entries.length <= weight) {
-        // Already fewer unique colors than requested; still run post-pass to
-        // ensure any downstream expectations are consistent (no-op in practice).
-        return enforcePaletteSize(data, weight);
+        return enforcePaletteSizeAsync(data, weight, (f) => opts?.onProgress?.(0.2 + f * 0.8));
     }
+
+    opts?.onProgress?.(0.2);
 
     type Box = {
         items: typeof entries;
@@ -194,6 +281,8 @@ export function medianCutImageData(data: ImageData, weight: number): ImageData {
         boxes.splice(idx, 1, makeBox(aItems), makeBox(bItems));
     }
 
+    opts?.onProgress?.(0.4);
+
     // compute palette (weighted average per box) and build lookup
     const lookup = new Map<number, [number, number, number]>();
     for (const box of boxes) {
@@ -216,19 +305,10 @@ export function medianCutImageData(data: ImageData, weight: number): ImageData {
     }
 
     // apply lookup
-    for (let i = 0; i < d.length; i += 4) {
-        const a = d[i + 3];
-        if (a === 0) continue; // leave transparent pixels untouched
-        const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
-        const v = lookup.get(key);
-        if (v) {
-            d[i] = v[0];
-            d[i + 1] = v[1];
-            d[i + 2] = v[2];
-        }
-    }
+    await applyLookupAsync(d, lookup, (f) => opts?.onProgress?.(0.4 + f * 0.3));
+    opts?.onProgress?.(0.7);
 
-    return enforcePaletteSize(data, weight);
+    return enforcePaletteSizeAsync(data, weight, (f) => opts?.onProgress?.(0.7 + f * 0.3));
 }
 
 // (default export consolidated at end)
@@ -237,37 +317,17 @@ export function medianCutImageData(data: ImageData, weight: number): ImageData {
  * K-means color quantization (weighted by pixel counts).
  * Uses k-means++ initialization and a small fixed number of iterations.
  */
-export function kmeansImageData(data: ImageData, weight: number): ImageData {
+export async function kmeansImageData(data: ImageData, weight: number, opts?: AlgoOptions): Promise<ImageData> {
     const d = data.data;
     weight = Math.max(2, Math.min(256, Math.floor(weight)));
 
     // Build unique color entries with counts
-    const map = new Map<number, number>();
-    for (let i = 0; i < d.length; i += 4) {
-        const a = d[i + 3];
-        if (a === 0) continue;
-        const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
-        map.set(key, (map.get(key) || 0) + 1);
-    }
-    const entries: {
-        key: number;
-        r: number;
-        g: number;
-        b: number;
-        count: number;
-    }[] = [];
-    map.forEach((count, key) => {
-        entries.push({
-            key,
-            r: (key >> 16) & 0xff,
-            g: (key >> 8) & 0xff,
-            b: key & 0xff,
-            count,
-        });
-    });
+    const map = await buildHistogramAsync(d, (f) => opts?.onProgress?.(f * 0.2));
+    const entries = histogramToEntries(map);
 
-    if (entries.length <= weight) return enforcePaletteSize(data, weight);
+    if (entries.length <= weight) return enforcePaletteSizeAsync(data, weight, (f) => opts?.onProgress?.(0.2 + f * 0.8));
 
+    opts?.onProgress?.(0.2);
     // helper: squared distance
     const dist2 = (
         a: { r: number; g: number; b: number },
@@ -392,58 +452,30 @@ export function kmeansImageData(data: ImageData, weight: number): ImageData {
         lookup.set(entries[i].key, [cent.r, cent.g, cent.b]);
     }
 
-    // apply mapping
-    for (let i = 0; i < d.length; i += 4) {
-        const a = d[i + 3];
-        if (a === 0) continue;
-        const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
-        const v = lookup.get(key);
-        if (v) {
-            d[i] = v[0];
-            d[i + 1] = v[1];
-            d[i + 2] = v[2];
-        }
-    }
+    opts?.onProgress?.(0.5);
 
-    return enforcePaletteSize(data, weight);
+    // apply mapping
+    await applyLookupAsync(d, lookup, (f) => opts?.onProgress?.(0.5 + f * 0.2));
+    opts?.onProgress?.(0.7);
+
+    return enforcePaletteSizeAsync(data, weight, (f) => opts?.onProgress?.(0.7 + f * 0.3));
 }
 
 /**
  * Octree color quantization. Builds an octree up to depth 8, reduces
  * nodes until the leaf count <= weight, then maps pixels to leaf averages.
  */
-export function octreeImageData(data: ImageData, weight: number): ImageData {
+export async function octreeImageData(data: ImageData, weight: number, opts?: AlgoOptions): Promise<ImageData> {
     const d = data.data;
     weight = Math.max(2, Math.min(256, Math.floor(weight)));
 
     // build histogram of unique colors
-    const map = new Map<number, number>();
-    for (let i = 0; i < d.length; i += 4) {
-        const a = d[i + 3];
-        if (a === 0) continue;
-        const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
-        map.set(key, (map.get(key) || 0) + 1);
-    }
+    const map = await buildHistogramAsync(d, (f) => opts?.onProgress?.(f * 0.2));
+    const entries = histogramToEntries(map);
 
-    const entries: {
-        key: number;
-        r: number;
-        g: number;
-        b: number;
-        count: number;
-    }[] = [];
-    map.forEach((count, key) =>
-        entries.push({
-            key,
-            r: (key >> 16) & 0xff,
-            g: (key >> 8) & 0xff,
-            b: key & 0xff,
-            count,
-        })
-    );
+    if (entries.length <= weight) return enforcePaletteSizeAsync(data, weight, (f) => opts?.onProgress?.(0.2 + f * 0.8));
 
-    if (entries.length <= weight) return enforcePaletteSize(data, weight);
-
+    opts?.onProgress?.(0.2);
     const MAX_DEPTH = 8;
 
     type Node = {
@@ -572,19 +604,12 @@ export function octreeImageData(data: ImageData, weight: number): ImageData {
         lookup.set(e.key, mapColorToLeaf(e.r, e.g, e.b));
     }
 
-    for (let i = 0; i < d.length; i += 4) {
-        const a = d[i + 3];
-        if (a === 0) continue;
-        const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
-        const v = lookup.get(key);
-        if (v) {
-            d[i] = v[0];
-            d[i + 1] = v[1];
-            d[i + 2] = v[2];
-        }
-    }
+    opts?.onProgress?.(0.4);
 
-    return enforcePaletteSize(data, weight);
+    await applyLookupAsync(d, lookup, (f) => opts?.onProgress?.(0.4 + f * 0.3));
+    opts?.onProgress?.(0.7);
+
+    return enforcePaletteSizeAsync(data, weight, (f) => opts?.onProgress?.(0.7 + f * 0.3));
 }
 
 export default {
@@ -601,38 +626,17 @@ export default {
  * 33x33x33 color cube, partitions space to minimize squared error, and
  * maps pixels to the computed palette. Operates in-place on ImageData.
  */
-export function wuImageData(data: ImageData, weight: number): ImageData {
+export async function wuImageData(data: ImageData, weight: number, opts?: AlgoOptions): Promise<ImageData> {
     const d = data.data;
     weight = Math.max(2, Math.min(256, Math.floor(weight)));
 
     // Build histogram of unique colors to reduce work (weighted entries)
-    const map = new Map<number, number>();
-    for (let i = 0; i < d.length; i += 4) {
-        const a = d[i + 3];
-        if (a === 0) continue;
-        const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
-        map.set(key, (map.get(key) || 0) + 1);
-    }
+    const map = await buildHistogramAsync(d, (f) => opts?.onProgress?.(f * 0.2));
+    const entries = histogramToEntries(map);
 
-    const entries: {
-        key: number;
-        r: number;
-        g: number;
-        b: number;
-        count: number;
-    }[] = [];
-    map.forEach((count, key) => {
-        entries.push({
-            key,
-            r: (key >> 16) & 0xff,
-            g: (key >> 8) & 0xff,
-            b: key & 0xff,
-            count,
-        });
-    });
+    if (entries.length <= weight) return enforcePaletteSizeAsync(data, weight, (f) => opts?.onProgress?.(0.2 + f * 0.8));
 
-    if (entries.length <= weight) return enforcePaletteSize(data, weight);
-
+    opts?.onProgress?.(0.2);
     // Wu uses a 33x33x33 cube (indices 0..32) where colors are quantized by >> 3
     const SIDE = 33;
     const SIZE = SIDE * SIDE * SIDE;
@@ -1062,18 +1066,13 @@ export function wuImageData(data: ImageData, weight: number): ImageData {
         if (!found) lookup.set(e.key, palette[0]);
     }
 
-    // apply mapping
-    for (let i = 0; i < d.length; i += 4) {
-        const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
-        const v = lookup.get(key);
-        if (v) {
-            d[i] = v[0];
-            d[i + 1] = v[1];
-            d[i + 2] = v[2];
-        }
-    }
+    opts?.onProgress?.(0.5);
 
-    return enforcePaletteSize(data, weight);
+    // apply mapping
+    await applyLookupAsync(d, lookup, (f) => opts?.onProgress?.(0.5 + f * 0.2));
+    opts?.onProgress?.(0.7);
+
+    return enforcePaletteSizeAsync(data, weight, (f) => opts?.onProgress?.(0.7 + f * 0.3));
 }
 
 /**
@@ -1206,10 +1205,140 @@ export function enforcePaletteSize(data: ImageData, target: number): ImageData {
 }
 
 /**
+ * Async version of enforcePaletteSize that yields periodically during
+ * pixel-scanning loops so the browser can paint progress updates.
+ */
+export async function enforcePaletteSizeAsync(
+    data: ImageData,
+    target: number,
+    onProgress?: (value: number) => void,
+): Promise<ImageData> {
+    target = Math.max(2, Math.min(256, Math.floor(target)));
+    const d = data.data;
+
+    // build histogram of unique colors (ignore fully transparent)
+    const map = await buildHistogramAsync(d, (f) => onProgress?.(f * 0.3));
+    const entries = histogramToEntries(map);
+
+    // If unique colors are already <= target, leave them (user allows fewer)
+    if (entries.length <= target) {
+        onProgress?.(1);
+        return data;
+    }
+
+    onProgress?.(0.3);
+
+    // merge nearest pairs until length == target (naive O(n^2) approach)
+    const dist2 = (
+        a: { r: number; g: number; b: number },
+        b: { r: number; g: number; b: number }
+    ) => {
+        const dr = a.r - b.r;
+        const dg = a.g - b.g;
+        const db = a.b - b.b;
+        return dr * dr + dg * dg + db * db;
+    };
+
+    const palette = entries.slice();
+    const mergeStart = palette.length;
+    const mergesNeeded = mergeStart - target;
+    const maybeYield = createYielder();
+    let mergesDone = 0;
+
+    while (palette.length > target) {
+        let bestI = 0,
+            bestJ = 1;
+        let bestDist = Infinity;
+        for (let i = 0; i < palette.length; i++) {
+            for (let j = i + 1; j < palette.length; j++) {
+                const d2 = dist2(palette[i], palette[j]);
+                if (d2 < bestDist) {
+                    bestDist = d2;
+                    bestI = i;
+                    bestJ = j;
+                }
+            }
+        }
+        const a = palette[bestI];
+        const b = palette[bestJ];
+        const wSum = a.count + b.count;
+        const nr = Math.round((a.r * a.count + b.r * b.count) / wSum);
+        const ng = Math.round((a.g * a.count + b.g * b.count) / wSum);
+        const nb = Math.round((a.b * a.count + b.b * b.count) / wSum);
+        const merged = {
+            key: (nr << 16) | (ng << 8) | nb,
+            r: nr,
+            g: ng,
+            b: nb,
+            count: wSum,
+        };
+        if (bestI < bestJ) {
+            palette.splice(bestJ, 1);
+            palette.splice(bestI, 1, merged);
+        } else {
+            palette.splice(bestI, 1);
+            palette.splice(bestJ, 1, merged);
+        }
+        mergesDone++;
+        if (mergesDone % 4 === 0 && mergesNeeded > 0) {
+            onProgress?.(0.3 + (mergesDone / mergesNeeded) * 0.3);
+            await maybeYield();
+        }
+    }
+
+    onProgress?.(0.6);
+
+    // Build mapping from original color -> nearest palette color (after merges)
+    const paletteColors = palette.map((p) => ({ r: p.r, g: p.g, b: p.b }));
+    const lookup = new Map<number, [number, number, number]>();
+    const paletteDist = (r: number, g: number, b: number, idx: number) => {
+        const p = paletteColors[idx];
+        const dr = r - p.r;
+        const dg = g - p.g;
+        const db = b - p.b;
+        return dr * dr + dg * dg + db * db;
+    };
+    for (const e of entries) {
+        let best = 0;
+        let bestD = Infinity;
+        for (let i = 0; i < paletteColors.length; i++) {
+            const d2 = paletteDist(e.r, e.g, e.b, i);
+            if (d2 < bestD) {
+                bestD = d2;
+                best = i;
+            }
+        }
+        const p = paletteColors[best];
+        lookup.set(e.key, [p.r, p.g, p.b]);
+    }
+
+    // remap pixels in-place using lookup (with yields)
+    const applyMaybeYield = createYielder();
+    const total = d.length / 4;
+    for (let i = 0; i < d.length; i += 4) {
+        const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
+        const v = lookup.get(key);
+        if (v) {
+            d[i] = v[0];
+            d[i + 1] = v[1];
+            d[i + 2] = v[2];
+        }
+        if (d[i + 3] > 0 && d[i + 3] < 255) d[i + 3] = 255;
+        if ((i & 0x3fffc) === 0) {
+            onProgress?.(0.6 + ((i / 4) / total) * 0.4);
+            await applyMaybeYield();
+        }
+    }
+
+    onProgress?.(1);
+    return data;
+}
+
+/**
  * Map every pixel color in `data` to the nearest color from `palette`.
  * `palette` is an array of hex strings like `#rrggbb`.
  */
-export function mapImageToPalette(data: ImageData, palette: string[]): ImageData {
+export async function mapImageToPalette(data: ImageData, palette: string[], opts?: AlgoOptions): Promise<ImageData> {
     // window debug augmentation (safe access)
     const d = data.data;
     if (!palette || palette.length === 0) return data;
@@ -1318,6 +1447,9 @@ export function mapImageToPalette(data: ImageData, palette: string[]): ImageData
         return v;
     };
 
+    const maybeYield = createYielder();
+    const total = d.length / 4;
+
     for (let i = 0; i < d.length; i += 4) {
         const a = d[i + 3];
         if (a === 0) continue; // leave fully transparent pixels as-is
@@ -1349,7 +1481,12 @@ export function mapImageToPalette(data: ImageData, palette: string[]): ImageData
         d[i + 1] = mapped[1];
         d[i + 2] = mapped[2];
         if (a < 255) d[i + 3] = 255; // normalize any partial alpha
+        if ((i & 0x3fffc) === 0) {
+            opts?.onProgress?.((i / 4) / total);
+            await maybeYield();
+        }
     }
 
+    opts?.onProgress?.(1);
     return data;
 }
