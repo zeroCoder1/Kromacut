@@ -4,7 +4,7 @@ import {
     kmeansImageData,
     octreeImageData,
     wuImageData,
-    enforcePaletteSize,
+    enforcePaletteSizeAsync,
     mapImageToPalette,
 } from '../lib/algorithms';
 import { PALETTES } from '../data/palettes';
@@ -55,6 +55,10 @@ export function useQuantize({
         const bump = (value: number) => {
             onProgress?.(Math.max(0, Math.min(1, value)));
         };
+        // Yield to the event loop so the browser can paint the progress bar.
+        // setTimeout(0) schedules on the macrotask queue, guaranteeing a render
+        // opportunity between heavy synchronous blocks.
+        const yieldFrame = () => new Promise<void>((r) => setTimeout(r, 0));
         bump(0.01);
         onStage?.('load');
         const blob = await canvasPreviewRef.current.exportImageBlob();
@@ -67,7 +71,7 @@ export function useQuantize({
             i.src = URL.createObjectURL(blob);
         });
         if (!img) return;
-        bump(0.15);
+        bump(0.04);
         try {
             if (typeof img.decode === 'function') {
                 await img.decode();
@@ -75,7 +79,8 @@ export function useQuantize({
         } catch {
             // ignore decode errors; onload already fired
         }
-        bump(0.3);
+        bump(0.06);
+        await yieldFrame();
 
         const w = img.naturalWidth;
         const h = img.naturalHeight;
@@ -86,41 +91,47 @@ export function useQuantize({
         if (!ctx) return;
         ctx.drawImage(img, 0, 0, w, h);
         const data = ctx.getImageData(0, 0, w, h);
-        bump(0.35);
+        bump(0.10);
+        await yieldFrame();
         // helper to finalize alpha after postprocessing
         const finalizeAlpha = (imgd: ImageData) => {
             // Any partially transparent (0<alpha<255) pixel becomes fully opaque
             const dd = imgd.data;
-            const total = dd.length / 4;
             for (let i = 0; i < dd.length; i += 4) {
                 const a = dd[i + 3];
                 if (a > 0 && a < 255) dd[i + 3] = 255;
-                if ((i / 4) % 50000 === 0) {
-                    bump(0.82 + (i / 4 / Math.max(1, total)) * 0.04);
-                }
             }
         };
-        const algoProgressEnd = 0.7;
+        // Algorithm progress maps from 0.10 to 0.65.
+        // The algorithm functions now accept { onProgress } and yield internally.
+        const algoStart = 0.10;
+        const algoEnd = 0.65;
+        const algoProgress = (f: number) => bump(algoStart + f * (algoEnd - algoStart));
         onStage?.('algorithm');
-        if (algorithm === 'median-cut') medianCutImageData(data, weight);
-        else if (algorithm === 'kmeans') kmeansImageData(data, weight);
-        else if (algorithm === 'octree') octreeImageData(data, weight);
-        else if (algorithm === 'wu') wuImageData(data, weight);
+        if (algorithm === 'median-cut') await medianCutImageData(data, weight, { onProgress: algoProgress });
+        else if (algorithm === 'kmeans') await kmeansImageData(data, weight, { onProgress: algoProgress });
+        else if (algorithm === 'octree') await octreeImageData(data, weight, { onProgress: algoProgress });
+        else if (algorithm === 'wu') await wuImageData(data, weight, { onProgress: algoProgress });
         else if (algorithm === 'none') {
             // no algorithm pass, leave data as-is for postprocessing
-        } else posterizeImageData(data, weight);
-        bump(algoProgressEnd);
+        } else await posterizeImageData(data, weight, { onProgress: algoProgress });
+        bump(algoEnd);
+        await yieldFrame();
 
         // put algorithm result (or original) into canvas
         onStage?.('post');
         ctx.putImageData(data, 0, 0);
-        bump(0.75);
+        bump(0.68);
+        await yieldFrame();
         // postprocessing: if an override palette is provided use it; otherwise
         // fall back to selectedPalette (named palettes) or auto (enforce finalColors)
         const overridePalette = options?.overridePalette;
         const overrideFinal = options?.overrideFinalColors;
+        const postStart = 0.68;
+        const postEnd = 0.85;
+        const postProgress = (f: number) => bump(postStart + f * (postEnd - postStart));
         if (overridePalette && overridePalette.length > 0) {
-            mapImageToPalette(data, overridePalette);
+            await mapImageToPalette(data, overridePalette, { onProgress: postProgress });
             ctx.putImageData(data, 0, 0);
         } else if (selectedPalette && selectedPalette !== 'auto') {
             // Search built-in palettes first, then custom palettes
@@ -128,19 +139,21 @@ export function useQuantize({
             const palColors =
                 builtIn?.colors ?? customPalettes.find((p) => p.id === selectedPalette)?.colors;
             if (palColors && palColors.length > 0) {
-                mapImageToPalette(data, palColors);
+                await mapImageToPalette(data, palColors, { onProgress: postProgress });
                 ctx.putImageData(data, 0, 0);
             }
         } else {
             // auto: reduce to finalColors (or overridden final) via enforcePaletteSize
-            enforcePaletteSize(data, overrideFinal ?? finalColors);
+            await enforcePaletteSizeAsync(data, overrideFinal ?? finalColors, postProgress);
             ctx.putImageData(data, 0, 0);
         }
-        bump(0.82);
+        bump(postEnd);
+        await yieldFrame();
         // Normalize any partial alpha AFTER post processing so uniqueness isn't skewed
         finalizeAlpha(data);
         ctx.putImageData(data, 0, 0);
-        bump(0.86);
+        bump(0.88);
+        await yieldFrame();
         // diagnostic: log final counts and what was applied
 
         // immediate swatches
@@ -159,7 +172,7 @@ export function useQuantize({
                 const k = (dd[i] << 16) | (dd[i + 1] << 8) | dd[i + 2];
                 cmap.set(k, (cmap.get(k) || 0) + 1);
                 if ((i / 4) % 10000 === 0) {
-                    bump(0.86 + (i / 4 / Math.max(1, total)) * 0.1);
+                    bump(0.88 + (i / 4 / Math.max(1, total)) * 0.1);
                 }
             }
             const topLocal = Array.from(cmap.entries())

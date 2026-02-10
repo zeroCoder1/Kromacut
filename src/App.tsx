@@ -135,11 +135,7 @@ function App(): React.ReactElement | null {
             setProcessingProgress((prev) => (value > prev ? value : prev));
         },
         onStage: (stage) => {
-            if (stage === 'algorithm') {
-                setProcessingIndeterminate(true);
-            } else if (stage === 'final') {
-                setProcessingIndeterminate(false);
-            } else {
+            if (stage === 'final') {
                 setProcessingIndeterminate(false);
             }
         },
@@ -443,7 +439,7 @@ function App(): React.ReactElement | null {
                                                             <div
                                                                 className={`h-2 rounded-full bg-primary ${
                                                                     showPercent
-                                                                        ? ''
+                                                                        ? 'transition-[width] duration-150'
                                                                         : 'animate-pulse'
                                                                 }`}
                                                                 style={{
