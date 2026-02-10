@@ -12,8 +12,14 @@ export interface UseAppHandlersParams {
     setExportingSTL: (b: boolean) => void;
     setExportProgress: (n: number) => void;
     exportingSTL: boolean;
-    exportObjectToStlBlob: (object: THREE.Object3D, onProgress?: (p: number) => void) => Promise<Blob>;
-    exportObjectTo3MFBlob: (object: THREE.Object3D, onProgress?: (p: number) => void) => Promise<Blob>;
+    exportObjectToStlBlob: (
+        object: THREE.Object3D,
+        onProgress?: (p: number) => void
+    ) => Promise<Blob>;
+    exportObjectTo3MFBlob: (
+        object: THREE.Object3D,
+        onProgress?: (p: number) => void
+    ) => Promise<Blob>;
     applyQuantize: (
         canvasRef: RefObject<CanvasPreviewHandle | null>,
         options?: { overridePalette?: string[]; overrideFinalColors?: number }

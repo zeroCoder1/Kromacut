@@ -188,9 +188,15 @@ export async function exportObjectTo3MFBlob(
     const onProgress = options?.onProgress;
     const totalMeshes = meshes.length;
     // Each mesh has two phases: vertices (~40%) and triangles (~40%), zip is last ~20%
-    const reportMeshProgress = (meshIdx: number, phase: 'vertices' | 'triangles', phaseFrac: number) => {
+    const reportMeshProgress = (
+        meshIdx: number,
+        phase: 'vertices' | 'triangles',
+        phaseFrac: number
+    ) => {
         if (!onProgress) return;
-        const meshFrac = (meshIdx + (phase === 'vertices' ? phaseFrac * 0.5 : 0.5 + phaseFrac * 0.5)) / totalMeshes;
+        const meshFrac =
+            (meshIdx + (phase === 'vertices' ? phaseFrac * 0.5 : 0.5 + phaseFrac * 0.5)) /
+            totalMeshes;
         // Mesh processing is ~80% of total, zip generation is ~20%
         onProgress(meshFrac * 0.8);
     };
