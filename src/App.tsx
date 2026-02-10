@@ -237,7 +237,7 @@ function App(): React.ReactElement | null {
             setExportProgress,
             exportingSTL,
             exportObjectToStlBlob,
-            exportObjectTo3MFBlob: (obj) =>
+            exportObjectTo3MFBlob: (obj, onProgress) =>
                 exportObjectTo3MFBlob(obj, {
                     layerHeight: threeDState.layerHeight,
                     firstLayerHeight: threeDState.slicerFirstLayerHeight,
@@ -245,6 +245,7 @@ function App(): React.ReactElement | null {
                         threeDState.paintMode === 'autopaint'
                             ? threeDState.autoPaintFilamentSwatches?.map((s) => s.hex)
                             : undefined,
+                    onProgress,
                 }),
             applyQuantize,
             swatches,
@@ -456,22 +457,56 @@ function App(): React.ReactElement | null {
                                         })()}
                                 </>
                             ) : (
-                                <ThreeDView
-                                    imageSrc={imageSrc}
-                                    baseSliceHeight={0}
-                                    layerHeight={threeDState.layerHeight}
-                                    slicerFirstLayerHeight={threeDState.slicerFirstLayerHeight}
-                                    colorSliceHeights={threeDState.colorSliceHeights}
-                                    colorOrder={threeDState.colorOrder}
-                                    swatches={threeDState.filteredSwatches}
-                                    pixelSize={threeDState.pixelSize}
-                                    rebuildSignal={threeDBuildSignal}
-                                    autoPaintEnabled={threeDState.paintMode === 'autopaint'}
-                                    autoPaintTotalHeight={threeDState.autoPaintResult?.totalHeight}
-                                    enhancedColorMatch={threeDState.enhancedColorMatch}
-                                    heightDithering={threeDState.heightDithering}
-                                    ditherLineWidth={threeDState.ditherLineWidth}
-                                />
+                                <>
+                                    <ThreeDView
+                                        imageSrc={imageSrc}
+                                        baseSliceHeight={0}
+                                        layerHeight={threeDState.layerHeight}
+                                        slicerFirstLayerHeight={threeDState.slicerFirstLayerHeight}
+                                        colorSliceHeights={threeDState.colorSliceHeights}
+                                        colorOrder={threeDState.colorOrder}
+                                        swatches={threeDState.filteredSwatches}
+                                        pixelSize={threeDState.pixelSize}
+                                        rebuildSignal={threeDBuildSignal}
+                                        autoPaintEnabled={threeDState.paintMode === 'autopaint'}
+                                        autoPaintTotalHeight={
+                                            threeDState.autoPaintResult?.totalHeight
+                                        }
+                                        enhancedColorMatch={threeDState.enhancedColorMatch}
+                                        heightDithering={threeDState.heightDithering}
+                                        ditherLineWidth={threeDState.ditherLineWidth}
+                                    />
+                                    {exportingSTL &&
+                                        (() => {
+                                            const pct = Math.max(
+                                                0,
+                                                Math.min(100, Math.round(exportProgress * 100))
+                                            );
+                                            const hasProgress = exportProgress > 0;
+                                            return (
+                                                <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm cursor-wait">
+                                                    <div className="w-[260px] rounded-xl border border-border/60 bg-background/90 shadow-lg px-4 py-3">
+                                                        <div className="text-sm font-semibold text-foreground">
+                                                            Exporting model...
+                                                        </div>
+                                                        <div className="mt-1 text-xs text-muted-foreground">
+                                                            {hasProgress ? `${pct}%` : 'Working...'}
+                                                        </div>
+                                                        <div className="mt-3 h-2 w-full rounded-full bg-muted">
+                                                            <div
+                                                                className={`h-2 rounded-full bg-primary ${hasProgress ? 'transition-[width] duration-150' : 'animate-pulse'}`}
+                                                                style={{
+                                                                    width: hasProgress
+                                                                        ? `${pct}%`
+                                                                        : '100%',
+                                                                }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
+                                </>
                             )}
                             <PreviewActions
                                 mode={mode}
