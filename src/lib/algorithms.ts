@@ -27,10 +27,7 @@ function createYielder(intervalMs = 30) {
  * Async pixel-loop helper: build a histogram of unique opaque colors.
  * Yields periodically so the UI stays responsive.
  */
-async function buildHistogramAsync(
-    d: Uint8ClampedArray,
-    onProgress?: (frac: number) => void,
-) {
+async function buildHistogramAsync(d: Uint8ClampedArray, onProgress?: (frac: number) => void) {
     const maybeYield = createYielder();
     const map = new Map<number, number>();
     const total = d.length / 4;
@@ -40,8 +37,9 @@ async function buildHistogramAsync(
             const key = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
             map.set(key, (map.get(key) || 0) + 1);
         }
-        if ((i & 0x3fffc) === 0) { // every ~65k pixels
-            onProgress?.((i / 4) / total);
+        if ((i & 0x3fffc) === 0) {
+            // every ~65k pixels
+            onProgress?.(i / 4 / total);
             await maybeYield();
         }
     }
@@ -56,7 +54,7 @@ async function buildHistogramAsync(
 async function applyLookupAsync(
     d: Uint8ClampedArray,
     lookup: Map<number, [number, number, number]>,
-    onProgress?: (frac: number) => void,
+    onProgress?: (frac: number) => void
 ) {
     const maybeYield = createYielder();
     const total = d.length / 4;
@@ -72,7 +70,7 @@ async function applyLookupAsync(
             }
         }
         if ((i & 0x3fffc) === 0) {
-            onProgress?.((i / 4) / total);
+            onProgress?.(i / 4 / total);
             await maybeYield();
         }
     }
@@ -94,7 +92,11 @@ function histogramToEntries(map: Map<number, number>) {
     return entries;
 }
 
-export async function posterizeImageData(data: ImageData, weight: number, opts?: AlgoOptions): Promise<ImageData> {
+export async function posterizeImageData(
+    data: ImageData,
+    weight: number,
+    opts?: AlgoOptions
+): Promise<ImageData> {
     const d = data.data;
     const maybeYield = createYielder();
     // sanitize and clamp
@@ -114,7 +116,7 @@ export async function posterizeImageData(data: ImageData, weight: number, opts?:
             const v = Math.round(idx * scale);
             d[i] = d[i + 1] = d[i + 2] = v;
             if ((i & 0x3fffc) === 0) {
-                opts?.onProgress?.(0.5 * (i / 4) / total);
+                opts?.onProgress?.((0.5 * (i / 4)) / total);
                 await maybeYield();
             }
         }
@@ -163,7 +165,7 @@ export async function posterizeImageData(data: ImageData, weight: number, opts?:
         }
         // leave alpha untouched
         if ((i & 0x3fffc) === 0) {
-            opts?.onProgress?.(0.5 * (i / 4) / total);
+            opts?.onProgress?.((0.5 * (i / 4)) / total);
             await maybeYield();
         }
     }
@@ -177,7 +179,11 @@ export async function posterizeImageData(data: ImageData, weight: number, opts?:
  * by recursively splitting color boxes along the longest channel at the
  * pixel-count median. Operates on ImageData in-place and returns it.
  */
-export async function medianCutImageData(data: ImageData, weight: number, opts?: AlgoOptions): Promise<ImageData> {
+export async function medianCutImageData(
+    data: ImageData,
+    weight: number,
+    opts?: AlgoOptions
+): Promise<ImageData> {
     const d = data.data;
     weight = Math.max(2, Math.min(256, Math.floor(weight)));
 
@@ -317,7 +323,11 @@ export async function medianCutImageData(data: ImageData, weight: number, opts?:
  * K-means color quantization (weighted by pixel counts).
  * Uses k-means++ initialization and a small fixed number of iterations.
  */
-export async function kmeansImageData(data: ImageData, weight: number, opts?: AlgoOptions): Promise<ImageData> {
+export async function kmeansImageData(
+    data: ImageData,
+    weight: number,
+    opts?: AlgoOptions
+): Promise<ImageData> {
     const d = data.data;
     weight = Math.max(2, Math.min(256, Math.floor(weight)));
 
@@ -325,7 +335,8 @@ export async function kmeansImageData(data: ImageData, weight: number, opts?: Al
     const map = await buildHistogramAsync(d, (f) => opts?.onProgress?.(f * 0.2));
     const entries = histogramToEntries(map);
 
-    if (entries.length <= weight) return enforcePaletteSizeAsync(data, weight, (f) => opts?.onProgress?.(0.2 + f * 0.8));
+    if (entries.length <= weight)
+        return enforcePaletteSizeAsync(data, weight, (f) => opts?.onProgress?.(0.2 + f * 0.8));
 
     opts?.onProgress?.(0.2);
     // helper: squared distance
@@ -465,7 +476,11 @@ export async function kmeansImageData(data: ImageData, weight: number, opts?: Al
  * Octree color quantization. Builds an octree up to depth 8, reduces
  * nodes until the leaf count <= weight, then maps pixels to leaf averages.
  */
-export async function octreeImageData(data: ImageData, weight: number, opts?: AlgoOptions): Promise<ImageData> {
+export async function octreeImageData(
+    data: ImageData,
+    weight: number,
+    opts?: AlgoOptions
+): Promise<ImageData> {
     const d = data.data;
     weight = Math.max(2, Math.min(256, Math.floor(weight)));
 
@@ -473,7 +488,8 @@ export async function octreeImageData(data: ImageData, weight: number, opts?: Al
     const map = await buildHistogramAsync(d, (f) => opts?.onProgress?.(f * 0.2));
     const entries = histogramToEntries(map);
 
-    if (entries.length <= weight) return enforcePaletteSizeAsync(data, weight, (f) => opts?.onProgress?.(0.2 + f * 0.8));
+    if (entries.length <= weight)
+        return enforcePaletteSizeAsync(data, weight, (f) => opts?.onProgress?.(0.2 + f * 0.8));
 
     opts?.onProgress?.(0.2);
     const MAX_DEPTH = 8;
@@ -626,7 +642,11 @@ export default {
  * 33x33x33 color cube, partitions space to minimize squared error, and
  * maps pixels to the computed palette. Operates in-place on ImageData.
  */
-export async function wuImageData(data: ImageData, weight: number, opts?: AlgoOptions): Promise<ImageData> {
+export async function wuImageData(
+    data: ImageData,
+    weight: number,
+    opts?: AlgoOptions
+): Promise<ImageData> {
     const d = data.data;
     weight = Math.max(2, Math.min(256, Math.floor(weight)));
 
@@ -634,7 +654,8 @@ export async function wuImageData(data: ImageData, weight: number, opts?: AlgoOp
     const map = await buildHistogramAsync(d, (f) => opts?.onProgress?.(f * 0.2));
     const entries = histogramToEntries(map);
 
-    if (entries.length <= weight) return enforcePaletteSizeAsync(data, weight, (f) => opts?.onProgress?.(0.2 + f * 0.8));
+    if (entries.length <= weight)
+        return enforcePaletteSizeAsync(data, weight, (f) => opts?.onProgress?.(0.2 + f * 0.8));
 
     opts?.onProgress?.(0.2);
     // Wu uses a 33x33x33 cube (indices 0..32) where colors are quantized by >> 3
@@ -1211,7 +1232,7 @@ export function enforcePaletteSize(data: ImageData, target: number): ImageData {
 export async function enforcePaletteSizeAsync(
     data: ImageData,
     target: number,
-    onProgress?: (value: number) => void,
+    onProgress?: (value: number) => void
 ): Promise<ImageData> {
     target = Math.max(2, Math.min(256, Math.floor(target)));
     const d = data.data;
@@ -1325,7 +1346,7 @@ export async function enforcePaletteSizeAsync(
         }
         if (d[i + 3] > 0 && d[i + 3] < 255) d[i + 3] = 255;
         if ((i & 0x3fffc) === 0) {
-            onProgress?.(0.6 + ((i / 4) / total) * 0.4);
+            onProgress?.(0.6 + (i / 4 / total) * 0.4);
             await applyMaybeYield();
         }
     }
@@ -1338,7 +1359,11 @@ export async function enforcePaletteSizeAsync(
  * Map every pixel color in `data` to the nearest color from `palette`.
  * `palette` is an array of hex strings like `#rrggbb`.
  */
-export async function mapImageToPalette(data: ImageData, palette: string[], opts?: AlgoOptions): Promise<ImageData> {
+export async function mapImageToPalette(
+    data: ImageData,
+    palette: string[],
+    opts?: AlgoOptions
+): Promise<ImageData> {
     // window debug augmentation (safe access)
     const d = data.data;
     if (!palette || palette.length === 0) return data;
@@ -1482,7 +1507,7 @@ export async function mapImageToPalette(data: ImageData, palette: string[], opts
         d[i + 2] = mapped[2];
         if (a < 255) d[i + 3] = 255; // normalize any partial alpha
         if ((i & 0x3fffc) === 0) {
-            opts?.onProgress?.((i / 4) / total);
+            opts?.onProgress?.(i / 4 / total);
             await maybeYield();
         }
     }

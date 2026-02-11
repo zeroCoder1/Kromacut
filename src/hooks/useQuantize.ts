@@ -91,7 +91,7 @@ export function useQuantize({
         if (!ctx) return;
         ctx.drawImage(img, 0, 0, w, h);
         const data = ctx.getImageData(0, 0, w, h);
-        bump(0.10);
+        bump(0.1);
         await yieldFrame();
         // helper to finalize alpha after postprocessing
         const finalizeAlpha = (imgd: ImageData) => {
@@ -104,13 +104,16 @@ export function useQuantize({
         };
         // Algorithm progress maps from 0.10 to 0.65.
         // The algorithm functions now accept { onProgress } and yield internally.
-        const algoStart = 0.10;
+        const algoStart = 0.1;
         const algoEnd = 0.65;
         const algoProgress = (f: number) => bump(algoStart + f * (algoEnd - algoStart));
         onStage?.('algorithm');
-        if (algorithm === 'median-cut') await medianCutImageData(data, weight, { onProgress: algoProgress });
-        else if (algorithm === 'kmeans') await kmeansImageData(data, weight, { onProgress: algoProgress });
-        else if (algorithm === 'octree') await octreeImageData(data, weight, { onProgress: algoProgress });
+        if (algorithm === 'median-cut')
+            await medianCutImageData(data, weight, { onProgress: algoProgress });
+        else if (algorithm === 'kmeans')
+            await kmeansImageData(data, weight, { onProgress: algoProgress });
+        else if (algorithm === 'octree')
+            await octreeImageData(data, weight, { onProgress: algoProgress });
         else if (algorithm === 'wu') await wuImageData(data, weight, { onProgress: algoProgress });
         else if (algorithm === 'none') {
             // no algorithm pass, leave data as-is for postprocessing
