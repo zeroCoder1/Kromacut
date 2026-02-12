@@ -12,8 +12,14 @@ export interface UseAppHandlersParams {
     setExportingSTL: (b: boolean) => void;
     setExportProgress: (n: number) => void;
     exportingSTL: boolean;
-    exportObjectToStlBlob: (object: THREE.Object3D, onProgress?: (p: number) => void) => Promise<Blob>;
-    exportObjectTo3MFBlob: (object: THREE.Object3D) => Promise<Blob>;
+    exportObjectToStlBlob: (
+        object: THREE.Object3D,
+        onProgress?: (p: number) => void
+    ) => Promise<Blob>;
+    exportObjectTo3MFBlob: (
+        object: THREE.Object3D,
+        onProgress?: (p: number) => void
+    ) => Promise<Blob>;
     applyQuantize: (
         canvasRef: RefObject<CanvasPreviewHandle | null>,
         options?: { overridePalette?: string[]; overrideFinalColors?: number }
@@ -96,10 +102,10 @@ export function useAppHandlers(params: UseAppHandlersParams) {
             alert('3D model not ready yet');
             return;
         }
-        setExportingSTL(true); // Reuse flag or create separate one? Reuse is fine to block UI
-        setExportProgress(0); // 3MF export might not support progress yet
+        setExportingSTL(true);
+        setExportProgress(0);
         try {
-            const blob = await exportObjectTo3MFBlob(threeObject);
+            const blob = await exportObjectTo3MFBlob(threeObject, (p) => setExportProgress(p));
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;

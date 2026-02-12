@@ -1,21 +1,31 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card } from '@/components/ui/card';
-import { NumberInput } from '@/components/ui/input';
 import ThreeDColorRow from './ThreeDColorRow';
 import { Sortable, SortableContent, SortableOverlay } from '@/components/ui/sortable';
 import { Button } from '@/components/ui/button';
-import { Check } from 'lucide-react';
+import { Check, RotateCcw } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import {
+    generateAutoLayers,
+    autoPaintToSliceHeights,
+    type AutoPaintResult,
+} from '../lib/autoPaint';
+import {
+    loadPrintSettingsFromStorage,
+    savePrintSettingsToStorage,
+    DEFAULT_PRINT_SETTINGS,
+} from '../lib/printSettingsStorage';
+import { useFilaments } from '../hooks/useFilaments';
+import { useProfileManager } from '../hooks/useProfileManager';
+import { useColorSlicing } from '../hooks/useColorSlicing';
+import { useSwapPlan } from '../hooks/useSwapPlan';
+import type { Swatch, ThreeDControlsStateShape } from '../types';
+import PrintSettingsCard from './PrintSettingsCard';
+import PrintInstructions from './PrintInstructions';
+import AutoPaintTab from './AutoPaintTab';
 
-type Swatch = { hex: string; a: number };
-
-interface ThreeDControlsStateShape {
-    layerHeight: number;
-    slicerFirstLayerHeight: number;
-    colorSliceHeights: number[];
-    colorOrder: number[];
-    filteredSwatches: Swatch[];
-    pixelSize: number; // mm per pixel (XY)
-}
+// Re-export types for backward compatibility
+export type { Filament, ThreeDControlsStateShape } from '../types';
 
 interface ThreeDControlsProps {
     swatches: Swatch[] | null;
@@ -28,159 +38,170 @@ interface ThreeDControlsProps {
 }
 
 export default function ThreeDControls({ swatches, onChange, persisted }: ThreeDControlsProps) {
-    // 3D printing controls (owned by this component)
-    const [layerHeight, setLayerHeight] = useState<number>(persisted?.layerHeight ?? 0.12); // mm
-    const [slicerFirstLayerHeight, setSlicerFirstLayerHeight] = useState<number>(
-        persisted?.slicerFirstLayerHeight ?? 0.2
-    );
-    const [colorSliceHeights, setColorSliceHeights] = useState<number[]>(
-        persisted?.colorSliceHeights?.slice() ?? []
-    );
-    const [pixelSize, setPixelSize] = useState<number>(persisted?.pixelSize ?? 0.1); // mm per pixel (XY plane)
+    // --- Filaments ---
+    const { filaments, setFilaments, addFilament, removeFilament, updateFilament } = useFilaments({
+        initial: persisted?.filaments?.length ? persisted.filaments : undefined,
+    });
 
-    // derive non-transparent swatches once per render and memoize
-    const filtered = useMemo(() => {
-        return swatches ? swatches.filter((s) => s.a !== 0) : [];
-    }, [swatches]);
+    // --- Profiles ---
+    const profileManager = useProfileManager({ filaments, setFilaments });
 
-    // ordering state: indices into `filtered` that control displayed order.
-    const [colorOrder, setColorOrder] = useState<number[]>(persisted?.colorOrder?.slice() ?? []);
-    const prevFilteredRef = useRef<Swatch[] | null>(
-        persisted?.filteredSwatches ? persisted.filteredSwatches.slice() : null
-    );
-    const prevHeightsRef = useRef<number[]>(
-        persisted?.colorSliceHeights ? persisted.colorSliceHeights.slice() : []
-    );
-    const prevOrderRef = useRef<number[]>(
-        persisted?.colorOrder ? persisted.colorOrder.slice() : []
-    );
-
-    // guard so we only emit immediately after hydration if needed
-    const hydratedRef = useRef<boolean>(false);
+    // Apply initial filaments from profile if available (one-time)
+    const [appliedProfileInit] = useState(() => {
+        if (profileManager.initialFilaments && profileManager.initialFilaments.length > 0) {
+            return profileManager.initialFilaments;
+        }
+        return null;
+    });
     useEffect(() => {
-        if (persisted && !hydratedRef.current) {
-            hydratedRef.current = true; // states already initialized from persisted above
+        if (appliedProfileInit) {
+            setFilaments(appliedProfileInit);
         }
-    }, [persisted]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    // Note: baseSliceHeight is intentionally freeform now (no snapping to layerHeight).
-    // We still enforce reasonable bounds when the user edits it.
-
-    // Initialize or resize per-color slice heights and preserve ordering when swatches change.
-    useEffect(() => {
-        // If we have no swatches currently (e.g., initial mount while upstream still loading),
-        // avoid clearing previously persisted state. We'll wait for real data.
-        if (filtered.length === 0) return;
-
-        const prevFiltered = prevFilteredRef.current || [];
-        const prevHeights = prevHeightsRef.current || [];
-        const prevOrder = prevOrderRef.current || [];
-
-        // Map prior heights by (hex,a) signature for quick lookup.
-        const heightMap = new Map<string, number>();
-        for (let i = 0; i < prevFiltered.length; i++) {
-            const pf = prevFiltered[i];
-            const key = pf.hex + ':' + pf.a;
-            const prevHeight = prevHeights[i];
-            // Only store valid, finite heights
-            if (typeof prevHeight === 'number' && isFinite(prevHeight) && prevHeight >= 0) {
-                heightMap.set(key, prevHeight);
-            }
-        }
-
-        const nextHeights = filtered.map((s) => {
-            const key = s.hex + ':' + s.a;
-            const existing = heightMap.get(key);
-            // Guard against invalid existing values
-            const isValid = typeof existing === 'number' && isFinite(existing) && existing >= 0;
-            const base = isValid ? existing : layerHeight;
-            const clamped = Math.max(layerHeight, Math.min(10, base));
-            // Guard against division by zero or invalid layerHeight
-            if (!layerHeight || !isFinite(layerHeight) || layerHeight <= 0) {
-                return isValid ? base : 0.2; // fallback to base or safe default
-            }
-            const multiple = Math.round(clamped / layerHeight) * layerHeight;
-            const snapped = Math.max(layerHeight, Math.min(10, multiple));
-            return Number(snapped.toFixed(8));
-        });
-        setColorSliceHeights(nextHeights);
-
-        // Reconstruct order using previous colorOrder mapping if available.
-        const nextOrder: number[] = [];
-        if (prevOrder.length && prevFiltered.length) {
-            // prevOrder contains indices into prevFiltered; iterate in that order.
-            for (const prevIdx of prevOrder) {
-                const sw = prevFiltered[prevIdx];
-                if (!sw) continue;
-                const idx = filtered.findIndex((f) => f.hex === sw.hex && f.a === sw.a);
-                if (idx !== -1 && !nextOrder.includes(idx)) nextOrder.push(idx);
-            }
-        }
-        // Fallback / append any remaining colors not yet in order.
-        const remaining: number[] = [];
-        for (let i = 0; i < filtered.length; i++) {
-            if (!nextOrder.includes(i)) remaining.push(i);
-        }
-
-        // Sort remaining colors by luminance (dark -> light)
-        const getLum = (hex: string) => {
-            const c = hex.replace('#', '');
-            const r = parseInt(c.slice(0, 2), 16) / 255;
-            const g = parseInt(c.slice(2, 4), 16) / 255;
-            const b = parseInt(c.slice(4, 6), 16) / 255;
-            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    // --- Print Settings ---
+    const [initialPrintSettings] = useState(() => {
+        const stored = loadPrintSettingsFromStorage();
+        return {
+            layerHeight:
+                stored?.layerHeight ?? persisted?.layerHeight ?? DEFAULT_PRINT_SETTINGS.layerHeight,
+            slicerFirstLayerHeight:
+                stored?.slicerFirstLayerHeight ??
+                persisted?.slicerFirstLayerHeight ??
+                DEFAULT_PRINT_SETTINGS.slicerFirstLayerHeight,
+            pixelSize:
+                stored?.pixelSize ?? persisted?.pixelSize ?? DEFAULT_PRINT_SETTINGS.pixelSize,
         };
-        remaining.sort((a, b) => getLum(filtered[a].hex) - getLum(filtered[b].hex));
+    });
 
-        nextOrder.push(...remaining);
-        setColorOrder(nextOrder);
+    const [layerHeight, setLayerHeight] = useState<number>(initialPrintSettings.layerHeight);
+    const [slicerFirstLayerHeight, setSlicerFirstLayerHeight] = useState<number>(
+        initialPrintSettings.slicerFirstLayerHeight
+    );
+    const [pixelSize, setPixelSize] = useState<number>(initialPrintSettings.pixelSize);
+    const [paintMode, setPaintMode] = useState<'manual' | 'autopaint'>(
+        persisted?.paintMode ?? 'manual'
+    );
+    const [autoPaintMaxHeight, setAutoPaintMaxHeight] = useState<number | undefined>(undefined);
+    const [enhancedColorMatch, setEnhancedColorMatch] = useState(false);
+    const [allowRepeatedSwaps, setAllowRepeatedSwaps] = useState(false);
+    const [heightDithering, setHeightDithering] = useState(false);
+    const [ditherLineWidth, setDitherLineWidth] = useState(0.42);
 
-        // Stash for next diff
-        prevFilteredRef.current = filtered.slice();
-        prevHeightsRef.current = nextHeights.slice();
-        prevOrderRef.current = nextOrder.slice();
-    }, [filtered, layerHeight]);
-
-    // stable per-row change handler so memoized rows don't re-render due to
-    // a new function identity being created each parent render
-    const onRowChange = useCallback((idx: number, v: number) => {
-        setColorSliceHeights((prev) => {
-            const next = prev.slice();
-            next[idx] = v;
-            return next;
-        });
+    const handleEnhancedColorMatchChange = useCallback((v: boolean) => {
+        setEnhancedColorMatch(v);
+        if (!v) {
+            setAllowRepeatedSwaps(false);
+            setHeightDithering(false);
+        }
     }, []);
 
-    // Handle sortable reordering
-    const handleColorOrderChange = useCallback((newOrder: string[]) => {
-        const newColorOrder = newOrder.map((v) => Number(v));
-        setColorOrder(newColorOrder);
-        prevOrderRef.current = newColorOrder.slice();
+    useEffect(() => {
+        savePrintSettingsToStorage({ layerHeight, slicerFirstLayerHeight, pixelSize });
+    }, [layerHeight, slicerFirstLayerHeight, pixelSize]);
+
+    const handleResetPrintSettings = useCallback(() => {
+        setLayerHeight(DEFAULT_PRINT_SETTINGS.layerHeight);
+        setSlicerFirstLayerHeight(DEFAULT_PRINT_SETTINGS.slicerFirstLayerHeight);
+        setPixelSize(DEFAULT_PRINT_SETTINGS.pixelSize);
     }, []);
 
-    // Stable signature of current settings for cheap change detection
-    const currentSignature = useMemo(() => {
-        const swSig = filtered.map((s) => `${s.hex}:${s.a}`).join('|');
-        const heightsSig = colorSliceHeights.join(',');
-        const orderSig = colorOrder.join(',');
-        return `${layerHeight}|${slicerFirstLayerHeight}|${pixelSize}|${heightsSig}|${orderSig}|${swSig}`;
-    }, [layerHeight, slicerFirstLayerHeight, pixelSize, colorSliceHeights, colorOrder, filtered]);
+    // --- Color Slicing ---
+    const {
+        filtered,
+        colorSliceHeights,
+        colorOrder,
+        displayOrder,
+        onRowChange,
+        handleResetHeights,
+        handleColorOrderChange,
+        isResetState,
+    } = useColorSlicing({
+        swatches,
+        layerHeight,
+        slicerFirstLayerHeight,
+        persisted,
+    });
 
-    const [appliedSignature, setAppliedSignature] = useState<string | null>(null);
-
-    // Apply handler - explicitly triggers the rebuild
-    const handleApply = useCallback(() => {
-        if (!onChange) return;
-        const next: ThreeDControlsStateShape = {
+    // --- Auto-paint ---
+    const autoPaintResult = useMemo<AutoPaintResult | undefined>(() => {
+        if (paintMode !== 'autopaint' || filaments.length === 0 || filtered.length === 0) {
+            return undefined;
+        }
+        return generateAutoLayers(
+            filaments,
+            filtered.map((s) => ({
+                hex: s.hex,
+                count: (s as Record<string, unknown>).count as number | undefined,
+            })),
             layerHeight,
             slicerFirstLayerHeight,
-            colorSliceHeights,
-            colorOrder,
-            filteredSwatches: filtered,
-            pixelSize,
-        };
-        setAppliedSignature(currentSignature);
-        onChange(next);
+            autoPaintMaxHeight,
+            enhancedColorMatch,
+            allowRepeatedSwaps
+        );
+    }, [
+        paintMode,
+        filaments,
+        filtered,
+        layerHeight,
+        slicerFirstLayerHeight,
+        autoPaintMaxHeight,
+        enhancedColorMatch,
+        allowRepeatedSwaps,
+    ]);
+
+    const autoPaintSliceData = useMemo(() => {
+        if (!autoPaintResult) return undefined;
+        return autoPaintToSliceHeights(autoPaintResult, layerHeight, slicerFirstLayerHeight);
+    }, [autoPaintResult, layerHeight, slicerFirstLayerHeight]);
+
+    // --- Swap Plan ---
+    const { swapPlan, copied, copyToClipboard } = useSwapPlan({
+        colorOrder,
+        colorSliceHeights,
+        filtered,
+        layerHeight,
+        slicerFirstLayerHeight,
+        paintMode,
+        autoPaintResult,
+    });
+
+    // --- Apply handler ---
+    const handleApply = useCallback(() => {
+        if (!onChange) return;
+
+        if (paintMode === 'autopaint' && autoPaintSliceData && autoPaintResult) {
+            onChange({
+                layerHeight,
+                slicerFirstLayerHeight,
+                colorSliceHeights: autoPaintSliceData.colorSliceHeights,
+                colorOrder: autoPaintSliceData.colorOrder,
+                filteredSwatches: autoPaintSliceData.virtualSwatches,
+                pixelSize,
+                filaments,
+                paintMode,
+                enhancedColorMatch,
+                allowRepeatedSwaps,
+                heightDithering,
+                ditherLineWidth,
+                autoPaintResult,
+                autoPaintSwatches: autoPaintSliceData.virtualSwatches,
+                autoPaintFilamentSwatches: autoPaintSliceData.filamentSwatches,
+            });
+        } else {
+            onChange({
+                layerHeight,
+                slicerFirstLayerHeight,
+                colorSliceHeights,
+                colorOrder,
+                filteredSwatches: filtered,
+                pixelSize,
+                filaments,
+                paintMode,
+            });
+        }
     }, [
         onChange,
         layerHeight,
@@ -189,195 +210,15 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         colorOrder,
         filtered,
         pixelSize,
-        currentSignature,
+        filaments,
+        paintMode,
+        enhancedColorMatch,
+        allowRepeatedSwaps,
+        heightDithering,
+        ditherLineWidth,
+        autoPaintResult,
+        autoPaintSliceData,
     ]);
-
-    // Pending changes flag based on signature comparison
-    const hasPendingChanges = useMemo(() => {
-        if (appliedSignature === null) return false; // before first apply, keep disabled
-        return appliedSignature !== currentSignature;
-    }, [appliedSignature, currentSignature]);
-
-    // Track if we've done initial auto-apply
-    const isFirstMount = useRef(true);
-
-    // Auto-apply on mount when switching to 3D mode
-    // Wait for swatches to be loaded and color heights to be initialized
-    useEffect(() => {
-        if (
-            persisted &&
-            isFirstMount.current &&
-            filtered.length > 0 &&
-            colorSliceHeights.length > 0
-        ) {
-            // Apply after a delay to ensure all initialization effects have run
-            const timer = setTimeout(() => {
-                isFirstMount.current = false;
-                handleApply();
-            }, 200);
-            return () => clearTimeout(timer);
-        }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [persisted, filtered.length, colorSliceHeights.length]);
-
-    // Prepare dynamic 3D print instruction data derived from current control state
-    type SwapEntry =
-        | { type: 'start'; swatch: Swatch }
-        | { type: 'swap'; swatch: Swatch; layer: number; height: number };
-
-    // Build cumulative slice heights following the same logic used by the renderer
-    const cumulativeHeights: number[] = [];
-    let run = 0;
-    for (let pos = 0; pos < colorOrder.length; pos++) {
-        const fi = colorOrder[pos];
-        const h = Number(colorSliceHeights[fi] ?? 0) || 0;
-        const eff = pos === 0 ? Math.max(h, slicerFirstLayerHeight || 0) : h;
-        run += eff;
-        cumulativeHeights[pos] = run;
-    }
-
-    // Build swap plan entries (typed)
-    const swapPlan: SwapEntry[] = [];
-    for (let pos = 0; pos < colorOrder.length; pos++) {
-        const fi = colorOrder[pos];
-        const sw = filtered[fi];
-        if (!sw) continue;
-        if (pos === 0) {
-            swapPlan.push({ type: 'start', swatch: sw });
-            continue;
-        }
-        const prevCum = cumulativeHeights[pos - 1] ?? 0;
-        const heightAt = Math.max(0, prevCum);
-        // Map geometry height to slicer layer index using slicer's first layer height.
-        // We report the layer whose top is at or above this height, matching slicer UI labels.
-        const effFirst = Math.max(0, slicerFirstLayerHeight || 0);
-        let layerNum = 1;
-        let displayHeight = heightAt; // fallback
-        if (layerHeight > 0) {
-            const delta = Math.max(0, heightAt - effFirst);
-            layerNum = 2 + Math.round(delta / layerHeight);
-            // Display height corresponds to the Z height of the layer in slicer
-            displayHeight = effFirst + (layerNum - 1) * layerHeight;
-        }
-        swapPlan.push({
-            type: 'swap',
-            swatch: sw,
-            layer: layerNum,
-            height: displayHeight,
-        });
-    }
-
-    // Build a plain-text representation of the instructions for copying
-    const buildInstructionsText = () => {
-        const lines: string[] = [];
-        lines.push('3D Print Instructions');
-        lines.push('---------------------');
-        lines.push(`Layer height: ${layerHeight.toFixed(3)} mm`);
-        lines.push(`First layer height: ${slicerFirstLayerHeight.toFixed(3)} mm`);
-        // static recommended settings
-        lines.push('Recommended: Layer loops: 1; Infill: 100%');
-        lines.push('');
-
-        if (swapPlan.length) {
-            const first = swapPlan[0];
-            if (first.type === 'start') lines.push(`Start with color: ${first.swatch.hex}`);
-        }
-
-        lines.push('');
-        lines.push('Color swap plan:');
-        if (swapPlan.length <= 1) {
-            lines.push('- No swaps — only one color configured.');
-        } else {
-            // number the entries for clarity
-            let idx = 1;
-            for (const entry of swapPlan) {
-                if (entry.type === 'start') {
-                    lines.push(`${idx}. Start with ${entry.swatch.hex}`);
-                } else {
-                    lines.push(
-                        `${idx}. Swap to ${entry.swatch.hex} at layer ${
-                            entry.layer
-                        } (~${entry.height.toFixed(3)} mm)`
-                    );
-                }
-                idx++;
-            }
-        }
-        lines.push('');
-        lines.push('Notes: Heights are approximate. Confirm in slicer before printing.');
-        lines.push('');
-        lines.push('---------------------');
-        lines.push('Made with Kromacut by vycdev!');
-        return lines.join('\n');
-    };
-
-    // Clipboard copy with fallback and brief copied feedback
-    const [copied, setCopied] = useState(false);
-    const copyTimerRef = useRef<number | null>(null);
-    const copyToClipboard = async () => {
-        const text = buildInstructionsText();
-        try {
-            if (navigator.clipboard && navigator.clipboard.writeText) {
-                await navigator.clipboard.writeText(text);
-            } else {
-                // fallback for older browsers
-                const ta = document.createElement('textarea');
-                ta.value = text;
-                // avoid scrolling to bottom
-                ta.style.position = 'fixed';
-                ta.style.opacity = '0';
-                document.body.appendChild(ta);
-                ta.focus();
-                ta.select();
-                document.execCommand('copy');
-                ta.remove();
-            }
-            setCopied(true);
-            if (copyTimerRef.current) window.clearTimeout(copyTimerRef.current);
-            copyTimerRef.current = window.setTimeout(() => setCopied(false), 2000);
-        } catch (err) {
-            // best-effort: ignore failures silently for now
-            console.error('Copy to clipboard failed', err);
-        }
-    };
-
-    // Get the current display order for the sortable
-    const displayOrder =
-        colorOrder.length === filtered.length ? colorOrder : filtered.map((_, i) => i);
-
-    // Ensure the currently-first color in display order cannot be below the slicer first layer height
-    // AND all colors stay aligned with valid layer boundaries.
-    useEffect(() => {
-        if (displayOrder.length === 0) return;
-
-        let changed = false;
-        const next = colorSliceHeights.slice();
-
-        displayOrder.forEach((fi, idx) => {
-            const current = next[fi];
-            if (typeof current !== 'number' || !isFinite(current)) return;
-
-            let snapped: number;
-            if (idx === 0) {
-                const minFirst = Math.max(layerHeight, slicerFirstLayerHeight);
-                const delta = Math.max(0, current - minFirst);
-                snapped = minFirst + Math.round(delta / layerHeight) * layerHeight;
-            } else {
-                snapped = Math.round(current / layerHeight) * layerHeight;
-                snapped = Math.max(layerHeight, snapped);
-            }
-
-            snapped = Number(snapped.toFixed(8));
-            if (Math.abs(current - snapped) > 1e-6) {
-                next[fi] = snapped;
-                changed = true;
-            }
-        });
-
-        if (changed) {
-            setColorSliceHeights(next);
-        }
-    }, [displayOrder, colorSliceHeights, layerHeight, slicerFirstLayerHeight]);
 
     return (
         <div className="space-y-4">
@@ -385,287 +226,152 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
             <div className="flex justify-end">
                 <Button
                     onClick={handleApply}
-                    disabled={!hasPendingChanges}
-                    className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold disabled:bg-green-600/50 disabled:cursor-not-allowed transition-all duration-200 shadow-md hover:shadow-lg active:scale-95 gap-1.5"
+                    className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold transition-all duration-200 shadow-md hover:shadow-lg active:scale-95 gap-1.5"
                 >
                     <Check className="w-4 h-4" />
-                    <span>{hasPendingChanges ? 'Apply Changes' : 'No Changes'}</span>
+                    <span>Build 3D Model</span>
                 </Button>
             </div>
 
             {/* Printing Parameters Card */}
-            <Card className="p-4 border border-border/50">
-                <div className="space-y-1 mb-4">
-                    <h3 className="text-sm font-semibold text-foreground">3D Print Settings</h3>
-                    <p className="text-xs text-muted-foreground">
-                        Configure your printing parameters
-                    </p>
-                </div>
-                <div className="space-y-4">
-                    {/* Pixel size (XY scaling) */}
-                    <div className="space-y-3">
-                        <label className="block space-y-3">
-                            <div className="flex justify-between items-center">
-                                <span className="font-semibold text-foreground">
-                                    Pixel Size (XY)
-                                </span>
-                                <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium">
-                                    mm/pixel
-                                </span>
-                            </div>
-                            <NumberInput
-                                min={0.01}
-                                max={10}
-                                step={0.01}
-                                value={pixelSize}
-                                onChange={(e) => {
-                                    const v = Number(e.target.value);
-                                    if (Number.isNaN(v)) return;
-                                    setPixelSize(Math.max(0.01, Math.min(10, v)));
-                                }}
-                            />
-                        </label>
-                    </div>
+            <PrintSettingsCard
+                layerHeight={layerHeight}
+                slicerFirstLayerHeight={slicerFirstLayerHeight}
+                pixelSize={pixelSize}
+                onLayerHeightChange={setLayerHeight}
+                onSlicerFirstLayerHeightChange={setSlicerFirstLayerHeight}
+                onPixelSizeChange={setPixelSize}
+                onReset={handleResetPrintSettings}
+                allDefault={
+                    layerHeight === DEFAULT_PRINT_SETTINGS.layerHeight &&
+                    slicerFirstLayerHeight === DEFAULT_PRINT_SETTINGS.slicerFirstLayerHeight &&
+                    pixelSize === DEFAULT_PRINT_SETTINGS.pixelSize
+                }
+            />
 
-                    {/* Layer height */}
-                    <div className="space-y-3">
-                        <label className="block space-y-3">
-                            <div className="flex justify-between items-center">
-                                <span className="font-semibold text-foreground">Layer Height</span>
-                                <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium">
-                                    mm
-                                </span>
-                            </div>
-                            <NumberInput
-                                min={0.01}
-                                max={10}
-                                step={0.01}
-                                value={layerHeight}
-                                onChange={(e) => {
-                                    const v = Number(e.target.value);
-                                    if (!Number.isNaN(v) && v >= 0.01 && v <= 10 && isFinite(v)) {
-                                        setLayerHeight(v);
-                                    }
-                                }}
-                            />
-                        </label>
-                    </div>
+            {/* Paint Mode Tabs */}
+            <Tabs
+                value={paintMode}
+                onValueChange={(v) => setPaintMode(v as 'manual' | 'autopaint')}
+            >
+                <TabsList className="w-full">
+                    <TabsTrigger value="manual" className="flex-1">
+                        Manual
+                    </TabsTrigger>
+                    <TabsTrigger value="autopaint" className="flex-1">
+                        Auto-paint
+                    </TabsTrigger>
+                </TabsList>
 
-                    {/* Slicer first layer height */}
-                    <div className="space-y-3">
-                        <label className="block space-y-3">
-                            <div className="flex justify-between items-center">
-                                <span className="font-semibold text-foreground">
-                                    First Layer Height
-                                </span>
-                                <span className="text-xs px-2 py-1 rounded-full bg-primary/10 text-primary font-medium">
-                                    mm
-                                </span>
-                            </div>
-                            <NumberInput
-                                min={0}
-                                max={10}
-                                step={0.01}
-                                value={slicerFirstLayerHeight}
-                                onChange={(e) => {
-                                    const v = Number(e.target.value);
-                                    if (Number.isNaN(v)) return;
-                                    const clamped = Math.max(0, Math.min(10, v));
-                                    setSlicerFirstLayerHeight(clamped);
-                                }}
-                            />
-                        </label>
-                    </div>
+                {/* Auto-paint Tab */}
+                <AutoPaintTab
+                    filaments={filaments}
+                    addFilament={addFilament}
+                    removeFilament={removeFilament}
+                    updateFilament={updateFilament}
+                    profiles={profileManager.profiles}
+                    activeProfileId={profileManager.activeProfileId}
+                    isDirty={profileManager.isDirty}
+                    showSaveNewPopover={profileManager.showSaveNewPopover}
+                    setShowSaveNewPopover={profileManager.setShowSaveNewPopover}
+                    saveProfileName={profileManager.saveProfileName}
+                    setSaveProfileName={profileManager.setSaveProfileName}
+                    importFeedback={profileManager.importFeedback}
+                    importInputRef={profileManager.importInputRef}
+                    handleSaveNewProfile={profileManager.handleSaveNewProfile}
+                    handleOverwriteProfile={profileManager.handleOverwriteProfile}
+                    handleLoadProfile={profileManager.handleLoadProfile}
+                    handleDeleteProfile={profileManager.handleDeleteProfile}
+                    handleExportProfile={profileManager.handleExportProfile}
+                    handleImportFile={profileManager.handleImportFile}
+                    autoPaintMaxHeight={autoPaintMaxHeight}
+                    setAutoPaintMaxHeight={setAutoPaintMaxHeight}
+                    autoPaintResult={autoPaintResult}
+                    autoPaintSliceData={autoPaintSliceData}
+                    filteredCount={filtered.length}
+                    enhancedColorMatch={enhancedColorMatch}
+                    setEnhancedColorMatch={handleEnhancedColorMatchChange}
+                    allowRepeatedSwaps={allowRepeatedSwaps}
+                    setAllowRepeatedSwaps={setAllowRepeatedSwaps}
+                    heightDithering={heightDithering}
+                    setHeightDithering={setHeightDithering}
+                    ditherLineWidth={ditherLineWidth}
+                    setDitherLineWidth={setDitherLineWidth}
+                />
 
-                    {/* Base slice height removed: first color height represents base thickness */}
-                </div>
-            </Card>
-
-            {/* Per-color slice heights with Sortable */}
-            <Card className="p-4 border border-border/50">
-                <div className="flex justify-between items-center mb-4">
-                    <div>
-                        <h4 className="font-semibold text-foreground">Color Slice Heights</h4>
-                        <p className="text-xs text-muted-foreground mt-1">
-                            Drag to reorder, adjust sliders to customize
-                        </p>
-                    </div>
-                    <span className="px-2 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold">
-                        {filtered.length} colors
-                    </span>
-                </div>
-                <div className="h-px bg-border/50 mb-4" />
-                <Sortable
-                    value={displayOrder.map(String)}
-                    onValueChange={handleColorOrderChange}
-                    orientation="vertical"
-                >
-                    <SortableContent asChild>
-                        <div className="space-y-2">
-                            {displayOrder.map((fi, idx) => {
-                                const s = filtered[fi];
-                                const val = colorSliceHeights[fi] ?? layerHeight;
-                                const isFirst = idx === 0;
-                                const minForRow = isFirst
-                                    ? Math.max(layerHeight, slicerFirstLayerHeight)
-                                    : layerHeight;
-                                return (
-                                    <ThreeDColorRow
-                                        key={`${s.hex}-${fi}`}
-                                        fi={fi}
-                                        hex={s.hex}
-                                        value={val}
-                                        layerHeight={layerHeight}
-                                        minHeight={minForRow}
-                                        onChange={onRowChange}
-                                    />
-                                );
-                            })}
-                        </div>
-                    </SortableContent>
-                    <SortableOverlay>
-                        <div className="rounded-lg bg-primary/10 h-11" />
-                    </SortableOverlay>
-                </Sortable>
-            </Card>
-
-            {/* 3D printing instruction group (dynamic) */}
-            <Card className="p-4 border border-border/50 mt-6">
-                <div className="flex justify-between items-start mb-4">
-                    <div>
-                        <h4 className="font-semibold text-foreground">Print Instructions</h4>
-                        <p className="text-xs text-muted-foreground mt-1">
-                            Generated swap plan for your printer
-                        </p>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={copyToClipboard}
-                        title="Copy print instructions to clipboard"
-                        aria-pressed={copied}
-                        className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200 ${
-                            copied
-                                ? 'bg-green-600 text-white'
-                                : 'bg-primary text-primary-foreground hover:bg-primary/90'
-                        }`}
-                    >
-                        {copied ? '✓ Copied!' : 'Copy'}
-                    </button>
-                </div>
-
-                <div className="h-px bg-border/50 mb-4" />
-
-                <div className="space-y-4 text-sm">
-                    {/* Recommended Settings */}
-                    <div className="p-3 rounded-lg bg-primary/5 border border-primary/20">
-                        <div className="font-semibold text-foreground mb-2">
-                            Recommended Settings
-                        </div>
-                        <div className="space-y-1 text-muted-foreground text-xs">
+                {/* Manual Tab */}
+                <TabsContent value="manual" forceMount className="data-[state=inactive]:hidden">
+                    <Card className="p-4 border border-border/50">
+                        <div className="flex justify-between items-center mb-4">
                             <div>
-                                • Wall loops: <span className="text-foreground font-medium">1</span>
+                                <h4 className="font-semibold text-foreground">
+                                    Color Slice Heights
+                                </h4>
+                                <p className="text-xs text-muted-foreground mt-1">
+                                    Drag to reorder, adjust sliders to customize
+                                </p>
                             </div>
-                            <div>
-                                • Infill: <span className="text-foreground font-medium">100%</span>
-                            </div>
-                            <div>
-                                • Layer height:{' '}
-                                <span className="text-foreground font-mono">
-                                    {layerHeight.toFixed(3)} mm
-                                </span>
-                            </div>
-                            <div>
-                                • First layer height:{' '}
-                                <span className="text-foreground font-mono">
-                                    {slicerFirstLayerHeight.toFixed(3)} mm
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={handleResetHeights}
+                                    disabled={isResetState}
+                                    title="Reset all heights and sort by luminance"
+                                    aria-label="Reset all heights and sorting"
+                                    className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-amber-600 hover:bg-amber-600/15 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground select-none cursor-pointer"
+                                >
+                                    <RotateCcw className="w-4 h-4" />
+                                </button>
+                                <span className="px-2 py-1 rounded-full bg-primary/10 text-primary text-xs font-semibold">
+                                    {filtered.length} colors
                                 </span>
                             </div>
                         </div>
-                    </div>
+                        <div className="h-px bg-border/50 mb-4" />
+                        <Sortable
+                            value={displayOrder.map(String)}
+                            onValueChange={handleColorOrderChange}
+                            orientation="vertical"
+                        >
+                            <SortableContent asChild>
+                                <div className="space-y-2">
+                                    {displayOrder.map((fi, idx) => {
+                                        const s = filtered[fi];
+                                        const val = colorSliceHeights[fi] ?? layerHeight;
+                                        const isFirst = idx === 0;
+                                        const minForRow = isFirst
+                                            ? Math.max(layerHeight, slicerFirstLayerHeight)
+                                            : layerHeight;
+                                        return (
+                                            <ThreeDColorRow
+                                                key={`${s.hex}-${fi}`}
+                                                fi={fi}
+                                                hex={s.hex}
+                                                value={val}
+                                                layerHeight={layerHeight}
+                                                minHeight={minForRow}
+                                                onChange={onRowChange}
+                                            />
+                                        );
+                                    })}
+                                </div>
+                            </SortableContent>
+                            <SortableOverlay>
+                                <div className="rounded-lg bg-primary/10 h-11" />
+                            </SortableOverlay>
+                        </Sortable>
+                    </Card>
+                </TabsContent>
+            </Tabs>
 
-                    {/* Start Color */}
-                    <div>
-                        <div className="font-semibold text-foreground mb-3">Start with Color</div>
-                        {swapPlan.length && swapPlan[0].type === 'start' ? (
-                            (() => {
-                                const sw = swapPlan[0].swatch;
-                                return (
-                                    <div className="flex items-center gap-3 p-4 rounded-lg bg-primary/5 border-2 border-primary/30 shadow-sm">
-                                        <span
-                                            className="block w-8 h-8 rounded-md border-2 border-border flex-shrink-0 shadow-md"
-                                            style={{ background: sw.hex }}
-                                            title={sw.hex}
-                                        />
-                                        <span className="font-mono text-sm font-semibold text-foreground">
-                                            {sw.hex}
-                                        </span>
-                                    </div>
-                                );
-                            })()
-                        ) : (
-                            <div className="text-muted-foreground text-sm p-3 rounded-lg bg-muted/30">
-                                —
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Color Swap Plan */}
-                    <div>
-                        <div className="font-semibold text-foreground mb-2">Color Swap Plan</div>
-                        {swapPlan.length <= 1 ? (
-                            <div className="text-muted-foreground text-sm p-3 rounded-lg bg-accent/5 border border-border/50">
-                                Only one color configured — no swaps needed.
-                            </div>
-                        ) : (
-                            <ol className="space-y-2">
-                                {swapPlan.map((entry, idx) => {
-                                    if (entry.type === 'start') return null;
-                                    return (
-                                        <li
-                                            key={idx}
-                                            className="flex items-start gap-2 text-muted-foreground text-xs p-2 rounded bg-accent/5"
-                                        >
-                                            <span className="text-primary font-semibold flex-shrink-0">
-                                                {idx}.
-                                            </span>
-                                            <div className="flex-1 flex flex-col gap-1.5">
-                                                <div className="flex items-center gap-2">
-                                                    <span>Swap to</span>
-                                                    <span
-                                                        className="inline-block w-4 h-4 rounded border border-border flex-shrink-0"
-                                                        style={{ background: entry.swatch.hex }}
-                                                    />
-                                                    <span className="font-mono text-foreground">
-                                                        {entry.swatch.hex}
-                                                    </span>
-                                                </div>
-                                                <div>
-                                                    at layer{' '}
-                                                    <span className="font-semibold text-foreground">
-                                                        {entry.layer}
-                                                    </span>{' '}
-                                                    (~
-                                                    <span className="font-mono text-foreground">
-                                                        {entry.height.toFixed(3)} mm
-                                                    </span>
-                                                    )
-                                                </div>
-                                            </div>
-                                        </li>
-                                    );
-                                })}
-                            </ol>
-                        )}
-                    </div>
-
-                    <div className="text-xs text-muted-foreground p-3 rounded-lg bg-accent/5 border border-border/50">
-                        <span>ℹ️</span>{' '}
-                        <span className="italic">
-                            Heights are approximate. Always confirm in your slicer before printing.
-                        </span>
-                    </div>
-                </div>
-            </Card>
+            {/* Print Instructions */}
+            <PrintInstructions
+                swapPlan={swapPlan}
+                layerHeight={layerHeight}
+                slicerFirstLayerHeight={slicerFirstLayerHeight}
+                copied={copied}
+                onCopy={copyToClipboard}
+            />
         </div>
     );
 }

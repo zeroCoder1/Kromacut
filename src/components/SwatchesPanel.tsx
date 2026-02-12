@@ -78,6 +78,7 @@ export const SwatchesPanel: React.FC<Props> = ({
                     )}
                 </div>
             </div>
+            <div className="h-px bg-border/50" />
             <div
                 className="grid gap-2 p-3 rounded-lg bg-muted/30"
                 style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(15px, 1fr))' }}
