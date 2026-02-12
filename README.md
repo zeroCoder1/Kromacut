@@ -62,6 +62,65 @@ Another minimal test you can try yourself in the app header: the Transmission Di
 - Layer height used to compute the exact layer numbers at which color swaps happen in the plain-text plan. 
 - Per-color slice heights are snapped/multiplied to sensible values relative to `layerHeight` when the swatches change or are initialized.
 
+## Auto-paint (Preview)
+
+Auto-paint is an automated layer-generation mode that replaces the manual palette/swatch workflow. Instead of reducing an image to a fixed number of colors and manually tuning per-color slice heights, you define a set of **filaments** (each with a color and a Transmission Distance) and let the algorithm compute the optimal layer stack automatically.
+
+### Core concepts
+
+- **Filaments**: Each filament has a hex color and a **Transmission Distance (TD)** value (in mm). TD describes how translucent the filament is — at a thickness equal to TD, only ~10% of light passes through. Dark/opaque filaments have low TD (e.g. 0.5 mm); light/translucent filaments have high TD (e.g. 6+ mm). When you add a filament without specifying a TD, Kromacut estimates one from the color's luminance and saturation.
+- **Beer-Lambert optical blending**: The algorithm simulates how light transmits through stacked filament layers using the Beer-Lambert law: `transmission = 10^(-thickness / TD)`. This physically models the color you see when printing thin semi-transparent layers on top of each other.
+- **Transition zones**: Each filament in the stack needs enough vertical space to visually transition from the color below it to its own pure color. The algorithm simulates adding layers one at a time until the blended color converges (DeltaE < 2.3 — the "just noticeable difference" threshold) or opacity exceeds 85%. The result is a set of transition zones, each with a start height, end height, and the filament used.
+- **Luminance-to-height mapping**: Once the transition zones are computed, each pixel's brightness is mapped to a target height in the model. Dark pixels get the minimum height (base layer only), bright pixels get the full height (all layers), and mid-tones fall proportionally in between. This produces the characteristic lithophane-style relief where image brightness = model thickness.
+
+### How it works (step by step)
+
+1. **Define filaments** — Add your filament colors and Transmission Distances in the Auto-paint tab. Use the color picker and TD input for each filament row.
+2. **Filament ordering** — By default filaments are sorted by luminance (darkest on the bottom, lightest on top). With **Enhanced color matching** enabled, the algorithm evaluates orderings to find the one that best reproduces the image's color palette.
+3. **Transition zone calculation** — For each consecutive pair of filaments, the algorithm simulates Beer-Lambert blending layer-by-layer until the color converges. The first (darkest) filament gets a foundation zone thick enough to be ~95% opaque (`TD × 1.3`).
+4. **Height compression** — If the ideal height exceeds a user-set **Max Height**, all zones are uniformly compressed. The UI shows which zones are compressed and by how much.
+5. **Virtual swatch generation** — The transition zones are sampled at each layer-height increment to produce a sequence of blended colors (virtual swatches). These drive the 3D preview and the height map, where each pixel maps to the layer whose blended color best matches.
+
+### Options
+
+| Option | Description |
+|---|---|
+| **Max Height** | Constrains the total model height (mm). When set below the auto-calculated ideal, zones are uniformly compressed. Leave blank or click `Auto` for the physics-derived default. |
+| **Enhanced color matching** | Optimizes filament ordering for best color reproduction rather than simple luminance sorting. For ≤6 filaments, all permutations of all non-empty subsets are evaluated exhaustively. For >6, a greedy heuristic builds the sequence one filament at a time. Scoring considers weighted DeltaE accuracy, height spread, layer count, and transition waste. |
+| **Allow repeated filament swaps** | (Requires Enhanced color matching) Allows a filament to appear more than once in the stack. This creates intermediate blended colors — for example, a thin white layer over red produces pink. The algorithm greedily inserts up to 4 extra swaps, each at the position that best improves the score. |
+| **Height dithering** | (Requires Enhanced color matching) Applies block-aware Floyd-Steinberg error diffusion to the quantized height map. Instead of sharp stair-steps between layer heights, dithering produces a stippled gradient that simulates intermediate heights, resulting in smoother tonal transitions in the print. Edge pixels between different heights are protected from dithering to avoid staircase artifacts. |
+| **Dither line width** | (Requires Height dithering) Controls the minimum dot size for the dither pattern in mm. This should roughly match your printer's line/nozzle width so dither dots are actually printable. Default: `0.42 mm`. |
+
+### Filament profiles
+
+Auto-paint configurations (filament lists) can be saved, loaded, and shared as **profiles**:
+
+- **Save / Save New** — Persist the current filament set under a name. Overwrite an existing profile or create a new one.
+- **Load** — Select a saved profile from the dropdown to restore its filaments.
+- **Export** — Download the current filaments as a `.kapp` file (JSON) to share with others.
+- **Import** — Load a `.kapp` or `.json` profile file from disk.
+- **Delete** — Remove a saved profile.
+
+Profiles are stored in browser `localStorage` and persist across sessions.
+
+### Transition zones panel
+
+When auto-paint is active and filaments are defined, the UI displays a **Transition Zones** panel showing:
+
+- Each zone's filament color swatch and hex code.
+- The start and end height of each zone (in mm) and its thickness (Δ).
+- A **compressed** badge on zones that have been reduced below their ideal thickness due to a Max Height constraint.
+- Total model height and total number of physical layers.
+
+### Quick start
+
+1. Load an image into Kromacut.
+2. Switch to the **Auto-paint** tab (inside the 3D controls panel).
+3. Click **Add Filament** and configure each filament's color and TD to match your real filament stock.
+4. (Optional) Enable **Enhanced color matching** for better results with complex images.
+5. The 3D preview updates automatically. Adjust **Max Height** if the model is too tall.
+6. Export the model via **Download STL** or **Download 3MF** and follow the printed swap plan.
+
 ## 3MF Export (Preview)
 
 Kromacut now supports exporting directly to `.3mf` format. This file format preserves color information by splitting the model into separate objects for each color, automatically assigned to different extruders/filaments.

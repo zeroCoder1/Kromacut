@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { NumberInput } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
-import { Check } from 'lucide-react';
+import { Check, Loader, RotateCcw } from 'lucide-react';
 import {
     Select,
     SelectContent,
@@ -12,6 +12,9 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { PALETTES } from '../data/palettes';
+import type { MergedPalette } from '../hooks/usePaletteManager';
+import type { CustomPalette } from '../types';
+import { PaletteManager } from './PaletteManager';
 
 interface Props {
     finalColors: number;
@@ -20,11 +23,23 @@ interface Props {
     onWeightChange: (n: number) => void;
     algorithm: string;
     setAlgorithm: (a: string) => void;
-    onApply: () => void;
+    onApply: () => Promise<void> | void;
     disabled: boolean;
     weightDisabled?: boolean;
     selectedPalette: string;
     onPaletteSelect: (id: string, size: number) => void;
+    applying?: boolean;
+    onReset?: () => void;
+    // Palette manager props
+    allPalettes: MergedPalette[];
+    customPalettes: CustomPalette[];
+    importFeedback: string | null;
+    importInputRef: React.RefObject<HTMLInputElement | null>;
+    onCreatePalette: (name: string, colors: string[]) => void;
+    onUpdatePalette: (id: string, patch: { name?: string; colors?: string[] }) => void;
+    onDeletePalette: (id: string) => void;
+    onExportPalette: (id: string) => void;
+    onImportPaletteFile: (e: React.ChangeEvent<HTMLInputElement>) => void;
 }
 
 export const ControlsPanel: React.FC<Props> = ({
@@ -39,16 +54,63 @@ export const ControlsPanel: React.FC<Props> = ({
     weightDisabled = false,
     selectedPalette,
     onPaletteSelect,
+    applying = false,
+    onReset,
+    allPalettes,
+    customPalettes,
+    importFeedback,
+    importInputRef,
+    onCreatePalette,
+    onUpdatePalette,
+    onDeletePalette,
+    onExportPalette,
+    onImportPaletteFile,
 }) => {
+    // Local state for relaxed typing
+    const [localColors, setLocalColors] = useState(finalColors);
+    const [localWeight, setLocalWeight] = useState(weight);
+
+    // Sync from parent props
+    useEffect(() => {
+        setLocalColors(finalColors);
+    }, [finalColors]);
+
+    useEffect(() => {
+        setLocalWeight(weight);
+    }, [weight]);
+
+    const allDefault =
+        finalColors === 16 &&
+        weight === 128 &&
+        algorithm === 'kmeans' &&
+        selectedPalette === 'auto';
+
     return (
         <Card className="p-4 border border-border/50 space-y-4">
             <div>
-                <h3 className="text-sm font-semibold text-foreground mb-4">
-                    Quantization Settings
-                </h3>
-                <p className="text-xs text-muted-foreground mb-4">
-                    Configure palette and reduce colors
-                </p>
+                <div className="flex items-start justify-between gap-2">
+                    <div className="space-y-1">
+                        <h3 className="text-sm font-semibold text-foreground">
+                            Quantization Settings
+                        </h3>
+                        <p className="text-xs text-muted-foreground">
+                            Configure palette and reduce colors
+                        </p>
+                    </div>
+                    {onReset && (
+                        <button
+                            type="button"
+                            onClick={onReset}
+                            disabled={allDefault}
+                            title="Reset quantization settings to default"
+                            aria-label="Reset quantization settings"
+                            className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md text-muted-foreground hover:text-amber-600 hover:bg-amber-600/15 transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-muted-foreground select-none cursor-pointer"
+                        >
+                            <RotateCcw className="w-4 h-4" />
+                        </button>
+                    )}
+                </div>
+                <div className="h-px bg-border/50 my-4" />
                 <div className="space-y-4">
                     <div className="space-y-2">
                         <Label htmlFor="palette-select" className="font-medium">
@@ -57,7 +119,7 @@ export const ControlsPanel: React.FC<Props> = ({
                         <Select
                             value={selectedPalette}
                             onValueChange={(paletteId) => {
-                                const palette = PALETTES.find((p) => p.id === paletteId);
+                                const palette = allPalettes.find((p) => p.id === paletteId);
                                 if (palette) {
                                     onPaletteSelect(paletteId, palette.size);
                                 }
@@ -99,8 +161,57 @@ export const ControlsPanel: React.FC<Props> = ({
                                         </div>
                                     </SelectItem>
                                 ))}
+                                {customPalettes.length > 0 && (
+                                    <>
+                                        <div className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider select-none border-t border-border/50 mt-1 pt-2">
+                                            Custom Palettes
+                                        </div>
+                                        {customPalettes.map((cp) => (
+                                            <SelectItem key={cp.id} value={cp.id}>
+                                                <div className="flex items-center gap-2">
+                                                    <span>
+                                                        {cp.name} ({cp.colors.length})
+                                                    </span>
+                                                    <div className="flex gap-1">
+                                                        {cp.colors
+                                                            .slice(0, 5)
+                                                            .map((c: string, i: number) => (
+                                                                <div
+                                                                    key={i}
+                                                                    className="rounded border border-border/70 select-none"
+                                                                    style={{
+                                                                        background: c,
+                                                                        width: '15px',
+                                                                        height: '15px',
+                                                                        aspectRatio: '1',
+                                                                    }}
+                                                                />
+                                                            ))}
+                                                        {cp.colors.length > 5 && (
+                                                            <div className="text-xs text-muted-foreground">
+                                                                +{cp.colors.length - 5}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </SelectItem>
+                                        ))}
+                                    </>
+                                )}
                             </SelectContent>
                         </Select>
+                        <PaletteManager
+                            customPalettes={customPalettes}
+                            allPalettes={allPalettes}
+                            selectedPalette={selectedPalette}
+                            importFeedback={importFeedback}
+                            importInputRef={importInputRef}
+                            onCreatePalette={onCreatePalette}
+                            onUpdatePalette={onUpdatePalette}
+                            onDeletePalette={onDeletePalette}
+                            onExportPalette={onExportPalette}
+                            onImportFile={onImportPaletteFile}
+                        />
                     </div>
                     <div className="space-y-2">
                         <div className="flex justify-between items-center">
@@ -112,12 +223,19 @@ export const ControlsPanel: React.FC<Props> = ({
                             id="final-colors"
                             min={2}
                             max={256}
-                            value={finalColors}
-                            onChange={(e) =>
-                                onFinalColorsChange(
-                                    Math.max(2, Math.min(256, Number(e.target.value) || 2))
-                                )
-                            }
+                            value={localColors}
+                            onChange={(e) => {
+                                const v = Number(e.target.value);
+                                if (!Number.isNaN(v)) {
+                                    setLocalColors(v);
+                                }
+                            }}
+                            onBlur={() => {
+                                // clamp and commit on blur
+                                const clamped = Math.max(2, Math.min(256, localColors));
+                                setLocalColors(clamped);
+                                onFinalColorsChange(clamped);
+                            }}
                         />
                     </div>
                     <div className="space-y-2">
@@ -130,13 +248,19 @@ export const ControlsPanel: React.FC<Props> = ({
                             id="weight"
                             min={2}
                             max={256}
-                            value={weight}
+                            value={localWeight}
                             disabled={weightDisabled}
-                            onChange={(e) =>
-                                onWeightChange(
-                                    Math.max(2, Math.min(256, Number(e.target.value) || 2))
-                                )
-                            }
+                            onChange={(e) => {
+                                const v = Number(e.target.value);
+                                if (!Number.isNaN(v)) {
+                                    setLocalWeight(v);
+                                }
+                            }}
+                            onBlur={() => {
+                                const clamped = Math.max(2, Math.min(256, localWeight));
+                                setLocalWeight(clamped);
+                                onWeightChange(clamped);
+                            }}
                         />
                     </div>
                     <div className="space-y-2">
@@ -157,16 +281,19 @@ export const ControlsPanel: React.FC<Props> = ({
                             </SelectContent>
                         </Select>
                     </div>
-                    <div className="h-px bg-border/50" />
                 </div>
             </div>
             <Button
                 onClick={onApply}
-                disabled={disabled}
+                disabled={disabled || applying}
                 className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold disabled:bg-green-600/50 disabled:cursor-not-allowed transition-all duration-200 shadow-md hover:shadow-lg active:scale-95 gap-1.5"
             >
-                <Check className="w-4 h-4" />
-                <span>Apply Quantization</span>
+                {applying ? (
+                    <Loader className="w-4 h-4 animate-spin" />
+                ) : (
+                    <Check className="w-4 h-4" />
+                )}
+                <span>{applying ? 'Applying...' : 'Apply'}</span>
             </Button>
         </Card>
     );

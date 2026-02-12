@@ -14,6 +14,8 @@ export function useThreeScene(
     const modelGroupRef = useRef<THREE.Group | null>(null);
     const materialRef = useRef<THREE.MeshStandardMaterial | null>(null);
 
+    const requestRenderRef = useRef<(() => void) | null>(null);
+
     useEffect(() => {
         const el = mountRef.current;
         if (!el) return;
@@ -75,6 +77,13 @@ export function useThreeScene(
             /* no-op */
         }
 
+        const requestRender = () => {
+            if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return;
+            if (controlsRef.current) controlsRef.current.update();
+            rendererRef.current.render(sceneRef.current, cameraRef.current);
+        };
+        requestRenderRef.current = requestRender;
+
         const resize = () => {
             if (!el || !cameraRef.current || !rendererRef.current) return;
             const w = el.clientWidth;
@@ -82,6 +91,7 @@ export function useThreeScene(
             rendererRef.current.setSize(w, h);
             cameraRef.current!.aspect = w / h;
             cameraRef.current!.updateProjectionMatrix();
+            requestRender();
         };
         const ro = new ResizeObserver(resize);
         ro.observe(el);
@@ -92,6 +102,7 @@ export function useThreeScene(
             if (sceneRef.current) {
                 sceneRef.current.background = new THREE.Color(isDarkMode ? 0x0b0c0d : 0xffffff);
             }
+            requestRender();
         };
 
         const themeObserver = new MutationObserver(() => {
@@ -103,30 +114,11 @@ export function useThreeScene(
         });
 
         const animate = () => {
-            controls.update();
+            if (controlsRef.current) controlsRef.current.update();
             renderer.render(scene, camera);
             rafRef.current = requestAnimationFrame(animate);
         };
         rafRef.current = requestAnimationFrame(animate);
-
-        // Create an overlay element for build-in-progress messaging
-        const overlay = document.createElement('div');
-        overlay.style.position = 'absolute';
-        overlay.style.left = '0';
-        overlay.style.top = '0';
-        overlay.style.width = '100%';
-        overlay.style.height = '100%';
-        overlay.style.display = 'none';
-        overlay.style.alignItems = 'center';
-        overlay.style.justifyContent = 'center';
-        overlay.style.pointerEvents = 'none';
-        overlay.style.zIndex = '10';
-        overlay.style.color = '#fff';
-        overlay.style.fontFamily = 'sans-serif';
-        overlay.style.fontSize = '14px';
-        overlay.textContent = 'Building 3D model…';
-        el.style.position = el.style.position || 'relative';
-        el.appendChild(overlay);
 
         return () => {
             if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -137,7 +129,6 @@ export function useThreeScene(
             renderer.dispose();
             if (renderer.domElement.parentNode)
                 renderer.domElement.parentNode.removeChild(renderer.domElement);
-            if (overlay.parentNode) overlay.parentNode.removeChild(overlay);
             // clear refs
             rendererRef.current = null;
             sceneRef.current = null;
@@ -156,6 +147,7 @@ export function useThreeScene(
         controlsRef,
         modelGroupRef,
         materialRef,
+        requestRender: () => requestRenderRef.current?.(),
     } as const;
 }
 

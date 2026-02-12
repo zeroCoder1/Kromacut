@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import ThreeDControls from './components/ThreeDControls';
+import type { ThreeDControlsStateShape } from './types';
 import ThreeDView from './components/ThreeDView';
 import logo from './assets/logo.png';
 import tdTestImg from './assets/tdTest.png';
@@ -21,9 +22,57 @@ import { useDropzone } from './hooks/useDropzone';
 import { exportObjectToStlBlob } from './lib/exportStl';
 import { exportObjectTo3MFBlob } from './lib/export3mf';
 import { useAppHandlers } from './hooks/useAppHandlers';
+import { useProcessingState } from './hooks/useProcessingState';
+import { useBuildWarning } from './hooks/useBuildWarning';
 import ResizableSplitter from './components/ResizableSplitter';
 import { ControlsPanel } from './components/ControlsPanel';
+import { usePaletteManager } from './hooks/usePaletteManager';
+import {
+    AlertDialog,
+    AlertDialogContent,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogAction,
+    AlertDialogCancel,
+} from './components/ui/alert-dialog';
 // ...existing imports
+
+const AUTOPAINT_STORAGE_KEY = 'kromacut.autopaint.v1';
+
+type AutoPaintPersisted = Pick<ThreeDControlsStateShape, 'filaments' | 'paintMode'>;
+
+const loadAutoPaintPersisted = (): AutoPaintPersisted | null => {
+    try {
+        const raw = localStorage.getItem(AUTOPAINT_STORAGE_KEY);
+        if (!raw) return null;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const parsed = JSON.parse(raw) as any;
+        if (!parsed || !Array.isArray(parsed.filaments)) return null;
+        // Migrate legacy `autoPaintEnabled` boolean → `paintMode`
+        const paintMode: 'manual' | 'autopaint' =
+            parsed.paintMode === 'autopaint' || parsed.paintMode === 'manual'
+                ? parsed.paintMode
+                : parsed.autoPaintEnabled
+                  ? 'autopaint'
+                  : 'manual';
+        return {
+            filaments: parsed.filaments,
+            paintMode,
+        };
+    } catch {
+        return null;
+    }
+};
+
+const saveAutoPaintPersisted = (value: AutoPaintPersisted) => {
+    try {
+        localStorage.setItem(AUTOPAINT_STORAGE_KEY, JSON.stringify(value));
+    } catch {
+        // ignore storage errors
+    }
+};
 
 function App(): React.ReactElement | null {
     // dropzone state managed by hook below
@@ -32,8 +81,20 @@ function App(): React.ReactElement | null {
     const [finalColors, setFinalColors] = useState<number>(16);
     const [algorithm, setAlgorithm] = useState<string>('kmeans');
     const SWATCH_CAP = 2 ** 10;
-    // default to the Auto palette
-    const [selectedPalette, setSelectedPalette] = useState<string>('auto');
+    // Palette manager: custom palettes CRUD + merged palette list + selected palette
+    const {
+        customPalettes,
+        allPalettes,
+        selectedPalette,
+        setSelectedPalette,
+        importFeedback: paletteImportFeedback,
+        importInputRef: paletteImportInputRef,
+        handleCreatePalette,
+        handleUpdatePalette,
+        handleDeletePalette,
+        handleExportPalette,
+        handleImportFile: handleImportPaletteFile,
+    } = usePaletteManager();
     const { imageSrc, setImage, clearCurrent, undo, redo, canUndo, canRedo } = useImageHistory(
         logo,
         undefined
@@ -46,17 +107,38 @@ function App(): React.ReactElement | null {
     const [showCheckerboard, setShowCheckerboard] = useState<boolean>(false);
     const [isCropMode, setIsCropMode] = useState(false);
     const [hasValidCropSelection, setHasValidCropSelection] = useState(false);
+    const {
+        isQuantizing,
+        setIsQuantizing,
+        isDedithering,
+        setIsDedithering,
+        processingLabel,
+        setProcessingLabel,
+        processingProgress,
+        setProcessingProgress,
+        processingIndeterminate,
+        setProcessingIndeterminate,
+    } = useProcessingState();
     const { applyQuantize } = useQuantize({
         algorithm,
         weight,
         finalColors,
         selectedPalette,
+        customPalettes,
         imageSrc,
         setImage: (u, push = true) => {
             invalidate();
             setImage(u, push);
         },
         onImmediateSwatches: (colors: SwatchEntry[]) => immediateOverride(colors),
+        onProgress: (value) => {
+            setProcessingProgress((prev) => (value > prev ? value : prev));
+        },
+        onStage: (stage) => {
+            if (stage === 'final') {
+                setProcessingIndeterminate(false);
+            }
+        },
     });
 
     // persistent (committed) adjustments applied on redraw. Key/value map.
@@ -68,37 +150,44 @@ function App(): React.ReactElement | null {
     const [exportingSTL, setExportingSTL] = useState(false);
     const [exportProgress, setExportProgress] = useState(0); // 0..1
     // 3D printing shared state
-    const [threeDState, setThreeDState] = useState<{
-        layerHeight: number;
-        slicerFirstLayerHeight: number;
-        colorSliceHeights: number[];
-        colorOrder: number[];
-        filteredSwatches: { hex: string; a: number }[];
-        pixelSize: number;
-    }>({
-        layerHeight: 0.12,
-        slicerFirstLayerHeight: 0.2,
-        colorSliceHeights: [],
-        colorOrder: [],
-        filteredSwatches: [],
-        pixelSize: 0.1,
+    const {
+        threeDState,
+        setThreeDState,
+        threeDBuildSignal,
+        buildWarning,
+        handleThreeDStateChange,
+        confirmBuild,
+        cancelBuild,
+    } = useBuildWarning({ imageSrc });
+
+    // Hydrate threeDState once with persisted autopaint data
+    const [autopaintHydrated] = useState(() => {
+        const persisted = loadAutoPaintPersisted();
+        return persisted;
     });
-    // Signal to force a rebuild of the 3D view when incremented
-    const [threeDBuildSignal, setThreeDBuildSignal] = useState(0);
+    useEffect(() => {
+        if (autopaintHydrated) {
+            setThreeDState((prev) => ({
+                ...prev,
+                filaments: autopaintHydrated.filaments ?? prev.filaments,
+                paintMode: autopaintHydrated.paintMode ?? prev.paintMode,
+            }));
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     const prevModeRef = useRef<typeof mode>(mode);
 
-    // When the user switches to 3D mode, trigger the rebuild signal (same effect as the Rebuild button).
-    // Schedule the rebuild on a short timeout so that the ThreeDControls have a chance to mount
-    // and emit their initial state (filteredSwatches / color heights) before ThreeDView starts building.
     useEffect(() => {
-        let t: number | undefined;
-        if (prevModeRef.current !== mode && mode === '3d') {
-            t = window.setTimeout(() => setThreeDBuildSignal((s) => s + 1), 50);
-        }
+        saveAutoPaintPersisted({
+            filaments: threeDState.filaments,
+            paintMode: threeDState.paintMode ?? 'manual',
+        });
+    }, [threeDState.filaments, threeDState.paintMode]);
+
+    // No auto-build on tab switch — the user must click "Build 3D Model" / "Apply Changes".
+    useEffect(() => {
         prevModeRef.current = mode;
-        return () => {
-            if (t) clearTimeout(t);
-        };
     }, [mode]);
 
     // removed duplicate syncing: manual changes to the numeric input should set Auto via onWeightChange
@@ -134,49 +223,31 @@ function App(): React.ReactElement | null {
     const layoutRef = useRef<HTMLDivElement | null>(null);
 
     const dropzone = useDropzone({ enabled: mode === '2d', onFile: handleFiles });
-    const { onExportImage, onExportStl, onExport3MF, onSwatchApply, onSwatchDelete } = useAppHandlers({
-        canvasPreviewRef,
-        imageSrc,
-        invalidate,
-        setImage,
-        setExportingSTL,
-        setExportProgress,
-        exportingSTL,
-        exportObjectToStlBlob,
-        exportObjectTo3MFBlob: (obj) =>
-            exportObjectTo3MFBlob(obj, {
-                layerHeight: threeDState.layerHeight,
-                firstLayerHeight: threeDState.slicerFirstLayerHeight,
-            }),
-        applyQuantize,
-        swatches,
-    });
-    // Stable handler to avoid recreating function each render and to prevent redundant state sets
-    const handleThreeDStateChange = useCallback(
-        (s: {
-            layerHeight: number;
-            slicerFirstLayerHeight: number;
-            colorSliceHeights: number[];
-            colorOrder: number[];
-            filteredSwatches: { hex: string; a: number }[];
-            pixelSize: number;
-        }) => {
-            setThreeDState((prev) => {
-                if (
-                    prev.layerHeight === s.layerHeight &&
-                    prev.slicerFirstLayerHeight === s.slicerFirstLayerHeight &&
-                    prev.colorSliceHeights === s.colorSliceHeights &&
-                    prev.colorOrder === s.colorOrder &&
-                    prev.filteredSwatches === s.filteredSwatches &&
-                    prev.pixelSize === s.pixelSize
-                ) {
-                    return prev; // no change; avoid triggering rerender cascade
-                }
-                return s;
-            });
-        },
-        []
-    );
+    const { onExportImage, onExportStl, onExport3MF, onSwatchApply, onSwatchDelete } =
+        useAppHandlers({
+            canvasPreviewRef,
+            imageSrc,
+            invalidate,
+            setImage,
+            setExportingSTL,
+            setExportProgress,
+            exportingSTL,
+            exportObjectToStlBlob,
+            exportObjectTo3MFBlob: (obj, onProgress) =>
+                exportObjectTo3MFBlob(obj, {
+                    layerHeight: threeDState.layerHeight,
+                    firstLayerHeight: threeDState.slicerFirstLayerHeight,
+                    layerFilamentColors:
+                        threeDState.paintMode === 'autopaint'
+                            ? threeDState.autoPaintFilamentSwatches?.map((s) => s.hex)
+                            : undefined,
+                    onProgress,
+                }),
+            applyQuantize,
+            swatches,
+        });
+
+    const processingActive = mode === '2d' && (isQuantizing || isDedithering);
 
     return (
         <div className="box-border text-inherit font-sans flex flex-col flex-1 min-w-0 max-w-full min-h-0 h-screen w-full">
@@ -239,6 +310,19 @@ function App(): React.ReactElement | null {
                                                 invalidate();
                                                 setImage(url, true);
                                             }}
+                                            onWorkingChange={(working) => {
+                                                setIsDedithering(working);
+                                                if (working) {
+                                                    setProcessingLabel('Dedithering...');
+                                                    setProcessingProgress(0);
+                                                    setProcessingIndeterminate(false);
+                                                }
+                                            }}
+                                            onProgress={(value) => {
+                                                setProcessingProgress((prev) =>
+                                                    value > prev ? value : prev
+                                                );
+                                            }}
                                         />
                                         <ControlsPanel
                                             // finalColors controls postprocessing result count
@@ -255,8 +339,23 @@ function App(): React.ReactElement | null {
                                             }}
                                             algorithm={algorithm}
                                             setAlgorithm={setAlgorithm}
-                                            onApply={() => applyQuantize(canvasPreviewRef)}
+                                            onApply={async () => {
+                                                if (isQuantizing) return;
+                                                setIsQuantizing(true);
+                                                setProcessingLabel('Quantizing...');
+                                                setProcessingProgress(0);
+                                                setProcessingIndeterminate(false);
+                                                await new Promise((r) => requestAnimationFrame(r));
+                                                try {
+                                                    await applyQuantize(canvasPreviewRef);
+                                                } finally {
+                                                    setIsQuantizing(false);
+                                                    setProcessingProgress(1);
+                                                    setProcessingIndeterminate(false);
+                                                }
+                                            }}
                                             disabled={!imageSrc || isCropMode}
+                                            applying={isQuantizing}
                                             weightDisabled={algorithm === 'none'}
                                             selectedPalette={selectedPalette}
                                             onPaletteSelect={(id, size) => {
@@ -264,6 +363,21 @@ function App(): React.ReactElement | null {
                                                 // set the postprocess target to the palette size, but do not lock it
                                                 if (id !== 'auto') setFinalColors(size);
                                             }}
+                                            onReset={() => {
+                                                setFinalColors(16);
+                                                setWeight(128);
+                                                setAlgorithm('kmeans');
+                                                setSelectedPalette('auto');
+                                            }}
+                                            allPalettes={allPalettes}
+                                            customPalettes={customPalettes}
+                                            importFeedback={paletteImportFeedback}
+                                            importInputRef={paletteImportInputRef}
+                                            onCreatePalette={handleCreatePalette}
+                                            onUpdatePalette={handleUpdatePalette}
+                                            onDeletePalette={handleDeletePalette}
+                                            onExportPalette={handleExportPalette}
+                                            onImportPaletteFile={handleImportPaletteFile}
                                         />
                                         <SwatchesPanel
                                             swatches={swatches}
@@ -291,26 +405,104 @@ function App(): React.ReactElement | null {
                             onDragLeave={dropzone.onDragLeave}
                         >
                             {mode === '2d' ? (
-                                <CanvasPreview
-                                    ref={canvasPreviewRef}
-                                    imageSrc={imageSrc}
-                                    isCropMode={isCropMode}
-                                    showCheckerboard={showCheckerboard}
-                                    adjustments={adjustments}
-                                    onCropSelectionChange={setHasValidCropSelection}
-                                />
+                                <>
+                                    <CanvasPreview
+                                        ref={canvasPreviewRef}
+                                        imageSrc={imageSrc}
+                                        isCropMode={isCropMode}
+                                        showCheckerboard={showCheckerboard}
+                                        adjustments={adjustments}
+                                        onCropSelectionChange={setHasValidCropSelection}
+                                    />
+                                    {processingActive &&
+                                        (() => {
+                                            const progressPct = Math.max(
+                                                0,
+                                                Math.min(100, Math.round(processingProgress * 100))
+                                            );
+                                            const showPercent = !processingIndeterminate;
+                                            const barWidth = showPercent
+                                                ? `${progressPct}%`
+                                                : '100%';
+                                            return (
+                                                <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm cursor-wait">
+                                                    <div className="w-[260px] rounded-xl border border-border/60 bg-background/90 shadow-lg px-4 py-3">
+                                                        <div className="text-sm font-semibold text-foreground">
+                                                            {processingLabel || 'Processing...'}
+                                                        </div>
+                                                        <div className="mt-1 text-xs text-muted-foreground">
+                                                            {showPercent
+                                                                ? `${progressPct}%`
+                                                                : 'Working...'}
+                                                        </div>
+                                                        <div className="mt-3 h-2 w-full rounded-full bg-muted">
+                                                            <div
+                                                                className={`h-2 rounded-full bg-primary ${
+                                                                    showPercent
+                                                                        ? 'transition-[width] duration-150'
+                                                                        : 'animate-pulse'
+                                                                }`}
+                                                                style={{
+                                                                    width: barWidth,
+                                                                }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
+                                </>
                             ) : (
-                                <ThreeDView
-                                    imageSrc={imageSrc}
-                                    baseSliceHeight={0}
-                                    layerHeight={threeDState.layerHeight}
-                                    slicerFirstLayerHeight={threeDState.slicerFirstLayerHeight}
-                                    colorSliceHeights={threeDState.colorSliceHeights}
-                                    colorOrder={threeDState.colorOrder}
-                                    swatches={threeDState.filteredSwatches}
-                                    pixelSize={threeDState.pixelSize}
-                                    rebuildSignal={threeDBuildSignal}
-                                />
+                                <>
+                                    <ThreeDView
+                                        imageSrc={imageSrc}
+                                        baseSliceHeight={0}
+                                        layerHeight={threeDState.layerHeight}
+                                        slicerFirstLayerHeight={threeDState.slicerFirstLayerHeight}
+                                        colorSliceHeights={threeDState.colorSliceHeights}
+                                        colorOrder={threeDState.colorOrder}
+                                        swatches={threeDState.filteredSwatches}
+                                        pixelSize={threeDState.pixelSize}
+                                        rebuildSignal={threeDBuildSignal}
+                                        autoPaintEnabled={threeDState.paintMode === 'autopaint'}
+                                        autoPaintTotalHeight={
+                                            threeDState.autoPaintResult?.totalHeight
+                                        }
+                                        enhancedColorMatch={threeDState.enhancedColorMatch}
+                                        heightDithering={threeDState.heightDithering}
+                                        ditherLineWidth={threeDState.ditherLineWidth}
+                                    />
+                                    {exportingSTL &&
+                                        (() => {
+                                            const pct = Math.max(
+                                                0,
+                                                Math.min(100, Math.round(exportProgress * 100))
+                                            );
+                                            const hasProgress = exportProgress > 0;
+                                            return (
+                                                <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm cursor-wait">
+                                                    <div className="w-[260px] rounded-xl border border-border/60 bg-background/90 shadow-lg px-4 py-3">
+                                                        <div className="text-sm font-semibold text-foreground">
+                                                            Exporting model...
+                                                        </div>
+                                                        <div className="mt-1 text-xs text-muted-foreground">
+                                                            {hasProgress ? `${pct}%` : 'Working...'}
+                                                        </div>
+                                                        <div className="mt-3 h-2 w-full rounded-full bg-muted">
+                                                            <div
+                                                                className={`h-2 rounded-full bg-primary ${hasProgress ? 'transition-[width] duration-150' : 'animate-pulse'}`}
+                                                                style={{
+                                                                    width: hasProgress
+                                                                        ? `${pct}%`
+                                                                        : '100%',
+                                                                }}
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })()}
+                                </>
                             )}
                             <PreviewActions
                                 mode={mode}
@@ -346,6 +538,33 @@ function App(): React.ReactElement | null {
                     </main>
                 </ResizableSplitter>
             </div>
+
+            {/* Build warning dialog */}
+            <AlertDialog
+                open={buildWarning !== null}
+                onOpenChange={(open) => !open && cancelBuild()}
+            >
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Performance Warning</AlertDialogTitle>
+                        <AlertDialogDescription asChild>
+                            <div className="space-y-2">
+                                <p>Building the 3D model may be slow due to:</p>
+                                <ul className="list-disc pl-5 space-y-1">
+                                    {buildWarning?.warnings.map((w, i) => (
+                                        <li key={i}>{w}</li>
+                                    ))}
+                                </ul>
+                                <p>Do you want to continue?</p>
+                            </div>
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={confirmBuild}>Build Anyway</AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     );
 }

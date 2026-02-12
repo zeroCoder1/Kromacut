@@ -5,6 +5,8 @@ import { MINIMAL_PROJECT_SETTINGS, KROMACUT_CONFIG } from './slicerDefaults';
 export interface Export3MFOptions {
     layerHeight?: number;
     firstLayerHeight?: number;
+    layerFilamentColors?: string[]; // Optional per-layer filament colors (hex) for export
+    onProgress?: (progress: number) => void;
 }
 
 function generateUUID() {
@@ -58,10 +60,19 @@ export async function exportObjectTo3MFBlob(
     const colorMap = new Map<string, number>();
     const colors: string[] = [];
 
-    const getMaterialIndex = (material: THREE.Material | THREE.Material[]): number => {
+    const normalizeHex = (hex?: string): string | null => {
+        if (!hex) return null;
+        const cleaned = hex.replace('#', '').toUpperCase();
+        return cleaned.length === 6 ? cleaned : null;
+    };
+
+    const getMaterialIndex = (
+        material: THREE.Material | THREE.Material[],
+        overrideHex?: string
+    ): number => {
         const mat = Array.isArray(material) ? material[0] : material;
-        let hex = 'FFFFFF';
-        if ('color' in mat && (mat as THREE.MeshStandardMaterial).color) {
+        let hex = normalizeHex(overrideHex) || 'FFFFFF';
+        if (!overrideHex && 'color' in mat && (mat as THREE.MeshStandardMaterial).color) {
             hex = (mat as THREE.MeshStandardMaterial).color.getHexString().toUpperCase();
         }
         if (!colorMap.has(hex)) {
@@ -72,8 +83,9 @@ export async function exportObjectTo3MFBlob(
     };
 
     // Pre-calculate all materials so we can write the header correctly
-    for (const mesh of meshes) {
-        getMaterialIndex(mesh.material);
+    for (let i = 0; i < meshes.length; i++) {
+        const overrideHex = options?.layerFilamentColors?.[i];
+        getMaterialIndex(meshes[i].material, overrideHex);
     }
 
     // Prepare Project Settings (Minimal)
@@ -172,14 +184,36 @@ export async function exportObjectTo3MFBlob(
     const YIELD_EVERY = 5000;
     let opsSinceYield = 0;
 
+    // Progress tracking
+    const onProgress = options?.onProgress;
+    const totalMeshes = meshes.length;
+    // Each mesh has two phases: vertices (~40%) and triangles (~40%), zip is last ~20%
+    const reportMeshProgress = (
+        meshIdx: number,
+        phase: 'vertices' | 'triangles',
+        phaseFrac: number
+    ) => {
+        if (!onProgress) return;
+        const meshFrac =
+            (meshIdx + (phase === 'vertices' ? phaseFrac * 0.5 : 0.5 + phaseFrac * 0.5)) /
+            totalMeshes;
+        // Mesh processing is ~80% of total, zip generation is ~20%
+        onProgress(meshFrac * 0.8);
+    };
+
     for (let i = 0; i < meshes.length; i++) {
         const mesh = meshes[i];
-        const matIdx = getMaterialIndex(mesh.material);
+        const overrideHex = options?.layerFilamentColors?.[i];
+        const matIdx = getMaterialIndex(mesh.material, overrideHex);
         const objectId = nextId++;
         componentIds.push(objectId);
 
-        let hex = 'FFFFFF';
-        if ('color' in mesh.material && (mesh.material as THREE.MeshStandardMaterial).color) {
+        let hex = normalizeHex(overrideHex) || 'FFFFFF';
+        if (
+            !overrideHex &&
+            'color' in mesh.material &&
+            (mesh.material as THREE.MeshStandardMaterial).color
+        ) {
             hex = (mesh.material as THREE.MeshStandardMaterial).color.getHexString().toUpperCase();
         }
         // Use 1-based index for color/extruder
@@ -210,6 +244,7 @@ export async function exportObjectTo3MFBlob(
             opsSinceYield++;
             if (opsSinceYield > YIELD_EVERY) {
                 opsSinceYield = 0;
+                reportMeshProgress(i, 'vertices', (j + 1) / count);
                 await new Promise((resolve) => setTimeout(resolve, 0));
             }
         }
@@ -219,12 +254,14 @@ export async function exportObjectTo3MFBlob(
 `);
 
         if (index) {
-            for (let j = 0; j < index.count; j += 3) {
+            const triCount = index.count;
+            for (let j = 0; j < triCount; j += 3) {
                 write(`   <triangle v1="${index.getX(j)}" v2="${index.getX(j + 1)}" v3="${index.getX(j + 2)}" />
 `);
                 opsSinceYield++;
                 if (opsSinceYield > YIELD_EVERY) {
                     opsSinceYield = 0;
+                    reportMeshProgress(i, 'triangles', (j + 3) / triCount);
                     await new Promise((resolve) => setTimeout(resolve, 0));
                 }
             }
@@ -235,6 +272,7 @@ export async function exportObjectTo3MFBlob(
                 opsSinceYield++;
                 if (opsSinceYield > YIELD_EVERY) {
                     opsSinceYield = 0;
+                    reportMeshProgress(i, 'triangles', (j + 3) / pos.count);
                     await new Promise((resolve) => setTimeout(resolve, 0));
                 }
             }
@@ -329,5 +367,15 @@ export async function exportObjectTo3MFBlob(
         JSON.stringify(projectSettings, null, 4)
     );
 
-    return await zip.generateAsync({ type: 'blob' });
+    onProgress?.(0.8);
+
+    return await zip.generateAsync(
+        { type: 'blob' },
+        onProgress
+            ? (meta) => {
+                  // zip progress goes from 80% to 100%
+                  onProgress(0.8 + (meta.percent / 100) * 0.2);
+              }
+            : undefined
+    );
 }
