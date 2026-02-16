@@ -1,4 +1,5 @@
 import type { Filament } from '@/types';
+import { computeProfileConfidence } from './calibration';
 
 export interface AutoPaintProfile {
     id: string;
@@ -7,9 +8,12 @@ export interface AutoPaintProfile {
     filaments: Filament[];
     createdAt: number;
     updatedAt: number;
+    // Optional metadata
+    description?: string;
+    tags?: string[];
 }
 
-export const CURRENT_PROFILE_VERSION = 1;
+export const CURRENT_PROFILE_VERSION = 2; // Bumped for calibration support
 
 const PROFILES_STORAGE_KEY = 'kromacut.autopaint.profiles';
 const LAST_PROFILE_KEY = 'kromacut.autopaint.lastProfileId';
@@ -137,7 +141,17 @@ export function importProfiles(
         const validFilaments = raw.filaments.filter(
             (f) =>
                 typeof f.id === 'string' && typeof f.color === 'string' && typeof f.td === 'number'
-        );
+        ).map((f) => ({
+            id: f.id,
+            color: f.color,
+            td: f.td,
+            // Preserve calibration data if present
+            ...(f.calibration && { calibration: f.calibration }),
+            // Preserve metadata if present
+            ...(f.brand && { brand: f.brand }),
+            ...(f.name && { name: f.name }),
+            ...(f.notes && { notes: f.notes }),
+        }));
 
         const now = Date.now();
         const profile: AutoPaintProfile = {
@@ -206,4 +220,56 @@ export function exportProfileBlob(profile: AutoPaintProfile): Blob {
 /** Sanitize a name for use as a filename. */
 export function profileFileName(name: string): string {
     return `${name.replace(/[^a-zA-Z0-9_-]/g, '_')}.kapp`;
+}
+
+// ============================================================================
+// Calibration Helpers
+// ============================================================================
+
+/**
+ * Compute average confidence score for a profile based on filament calibrations
+ */
+export function getProfileConfidence(profile: AutoPaintProfile): number {
+    if (profile.filaments.length === 0) return 0;
+
+    const confidences = profile.filaments.map((f) =>
+        computeProfileConfidence({ calibration: f.calibration, transmissionDistance: f.td })
+    );
+
+    return confidences.reduce((sum, c) => sum + c, 0) / confidences.length;
+}
+
+/**
+ * Check if profile has calibration data for all filaments
+ */
+export function isProfileFullyCalibrated(profile: AutoPaintProfile): boolean {
+    return profile.filaments.every((f) => f.calibration !== undefined);
+}
+
+/**
+ * Check if profile has calibration data for at least one filament
+ */
+export function isProfilePartiallyCalibrated(profile: AutoPaintProfile): boolean {
+    return profile.filaments.some((f) => f.calibration !== undefined);
+}
+
+/**
+ * Get calibration status summary for UI display
+ */
+export function getProfileCalibrationStatus(profile: AutoPaintProfile): {
+    calibratedCount: number;
+    totalCount: number;
+    confidence: number;
+    status: 'none' | 'partial' | 'full';
+} {
+    const calibratedCount = profile.filaments.filter((f) => f.calibration).length;
+    const totalCount = profile.filaments.length;
+    const confidence = getProfileConfidence(profile);
+
+    let status: 'none' | 'partial' | 'full';
+    if (calibratedCount === 0) status = 'none';
+    else if (calibratedCount === totalCount) status = 'full';
+    else status = 'partial';
+
+    return { calibratedCount, totalCount, confidence, status };
 }
