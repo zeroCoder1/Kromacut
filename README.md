@@ -6,7 +6,13 @@
 
 Open-source HueForge-style tool for converting images into stacked, color-layered 3D prints.
 
-Kromacut is a browser-first app that helps you reduce an image to a small palette, preview how the image maps to stacked layers, tweak per-color layer heights and ordering, and export a printable STL along with printer swap instructions.
+Kromacut is a browser-first app that converts images into multi-color lithophane 3D prints. It offers two powerful workflows:
+
+**Auto-paint mode** — Define your actual filaments (color + Transmission Distance), and Kromacut automatically computes optimal layer stacks using physically accurate Beer-Lambert optical blending. Features include a calibration wizard, 80+ filament library, advanced optimizer (simulated annealing/genetic algorithms), and region weighting for spatial priority.
+
+**Manual mode** — Reduce images to a small palette, manually tweak per-color layer heights and ordering, and fine-tune every aspect of the stack with complete control.
+
+Both modes include live 2D/3D previews, layer-by-layer visualization, and export to STL/3MF with detailed print instructions.
 
 ## Examples
 
@@ -53,12 +59,33 @@ Another minimal test you can try yourself in the app header: the Transmission Di
 
 ## How to use
 
-- Upload or drag an image into the preview area.
-- Adjust quantization settings to reduce to the desired number of colors.
-- Tweak or replace swatches using the color pickers in the Swatches panel.
-- Open the 3D panel to configure per-color slice heights, base slice height, pixel size, and the color order.
-- When ready, click `Download STL` or `Download 3MF` (in the preview-actions bar when in 3D mode) to export your model.
-- Use the `Copy` button in the 3D controls to copy a plain-text print plan that lists layer heights and swap layers (hex codes are followed by friendly color names where available).
+### Quick start (Auto-paint mode — Recommended)
+
+1. Upload or drag an image into the preview area.
+2. Switch to the **Auto-paint** tab in the 3D controls panel.
+3. Click **Add Filament** and configure your filaments:
+   - Use the **calibration wizard** (calibrate icon) to measure accurate TD values, or
+   - Browse the **filament library** for 80+ pre-configured profiles.
+4. Enable **Enhanced color matching** for optimal results (auto-selects best algorithm).
+5. (Optional) Set **Region weighting** to Center or Edge to prioritize important areas.
+6. Use the **layer-by-layer preview slider** to verify transitions.
+7. Export via **Download STL** or **Download 3MF** and follow the print plan.
+
+See the [Auto-paint section](#auto-paint) for complete details.
+
+### Manual mode workflow
+
+1. Upload or drag an image into the preview area.
+2. Adjust quantization settings to reduce to the desired number of colors.
+3. Tweak or replace swatches using the color pickers in the Swatches panel.
+4. Open the 3D panel → **Manual** tab to configure:
+   - Per-color slice heights
+   - Base slice height
+   - Pixel size
+   - Color order (drag-and-drop)
+5. Preview in 3D and use the layer slider to inspect the stack.
+6. Click `Download STL` or `Download 3MF` to export your model.
+7. Use the `Copy` button to copy the plain-text print plan with layer heights and swap instructions.
 
 ## 3D / printing specifics and tips
 
@@ -78,7 +105,7 @@ The 3D view includes an interactive **height slider** at the bottom that lets yo
 
 This is especially useful for complex multi-color prints where you need to understand exactly when each color transition occurs.
 
-## Auto-paint (Preview)
+## Auto-paint
 
 Auto-paint is an automated layer-generation mode that replaces the manual palette/swatch workflow. Instead of reducing an image to a fixed number of colors and manually tuning per-color slice heights, you define a set of **filaments** (each with a color and a Transmission Distance) and let the algorithm compute the optimal layer stack automatically.
 
@@ -209,7 +236,7 @@ Transmission Distance (TD) is the concept HueForge uses to produce perceptual in
 - **Advanced optimizer** — Simulated annealing and genetic algorithms find the best filament ordering for complex images.
 - **Transition zones** — Automatically calculated vertical zones where each filament blends from the color below to its own pure color.
 
-See the [Auto-paint section](#auto-paint-preview) above for full details.
+See the [Auto-paint section](#auto-paint) above for full details.
 
 **2. Manual mode (Traditional workflow)** — For users who want complete control:
 
