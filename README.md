@@ -34,9 +34,13 @@ Another minimal test you can try yourself in the app header: the Transmission Di
 - Per-color slice heights and a configurable base slice height.
 - Reorder colors with drag-and-drop to control stack order (darkest → lightest default ordering).
 - Live 2D preview and a 3D stacked preview rendered with three.js.
+- **Layer-by-layer preview slider** — Interactively visualize how the print builds up by dragging a slider to show/hide layers at specific heights.
 - 3D model export to binary STL or 3MF (Preview) suitable for multi-material slicers.
 - Plain-text 3D print instructions that describe layer heights and exact layers where filament swaps are required.
 - Copy-to-clipboard button for the print instructions (produces a clean, copyable plain-text plan).
+- **Filament calibration wizard** — Accurately determine Transmission Distance (TD) values through measured samples with confidence scoring.
+- **Advanced optimizer** — Simulated annealing and genetic algorithms find optimal filament ordering for complex multi-color prints.
+- **Region weighting** — Prioritize accuracy in specific image areas (center, edges) during auto-paint optimization.
 
 ## Notable implementation details
 
@@ -44,6 +48,7 @@ Another minimal test you can try yourself in the app header: the Transmission Di
 - 3D Rendering: three.js with BufferGeometry. The geometry pipeline produces per-face (non-indexed) triangles so each color slice renders as a solid block (no blended vertex colors) and vertical side walls are preserved.
 - Texture sampling: we create a `CanvasTexture` from the preview canvas and use `NearestFilter` with mipmaps disabled so the texture stays crisp when mapped onto the 3D mesh. The texture UVs are adjusted (repeat/offset) so the canvas region aligns with the mesh bounding box.
 - Color ordering: palette swatches are derived from image pixels, then ordered by hue/saturation/lightness and presented from darkest to lightest by default (you can reorder manually).
+- Async mesh generation: The greedy meshing algorithm yields control back to the browser every 8ms during large mesh builds, keeping the UI responsive. Boundary vertex filtering uses binary search for optimal performance.
 
 
 ## How to use
@@ -61,6 +66,17 @@ Another minimal test you can try yourself in the app header: the Transmission Di
 - Layer height default: `0.12 mm`
 - Layer height used to compute the exact layer numbers at which color swaps happen in the plain-text plan. 
 - Per-color slice heights are snapped/multiplied to sensible values relative to `layerHeight` when the swatches change or are initialized.
+
+### Layer-by-layer preview
+
+The 3D view includes an interactive **height slider** at the bottom that lets you visualize how the print builds up layer by layer:
+
+- Drag the slider to show/hide layers progressively from base (0mm) to full height
+- Current height and layer information displayed in real-time
+- Slider step size matches your configured layer height for accurate control
+- Helps verify filament swap positions and catch potential issues before printing
+
+This is especially useful for complex multi-color prints where you need to understand exactly when each color transition occurs.
 
 ## Auto-paint (Preview)
 
@@ -81,15 +97,62 @@ Auto-paint is an automated layer-generation mode that replaces the manual palett
 4. **Height compression** — If the ideal height exceeds a user-set **Max Height**, all zones are uniformly compressed. The UI shows which zones are compressed and by how much.
 5. **Virtual swatch generation** — The transition zones are sampled at each layer-height increment to produce a sequence of blended colors (virtual swatches). These drive the 3D preview and the height map, where each pixel maps to the layer whose blended color best matches.
 
+### Filament Calibration
+
+Each filament row in the Auto-paint tab includes a **calibration wizard** to help you determine accurate Transmission Distance values:
+
+1. **Click the calibrate icon** next to any filament to open the calibration wizard.
+2. **Print test samples** — The wizard guides you through printing 3-5 samples of different thicknesses (e.g., 0.3mm, 0.6mm, 1.0mm, 1.5mm, 2.0mm).
+3. **Measure luminance** — Use a light meter or camera to measure how much light passes through each sample, or visually compare against reference colors.
+4. **Automatic TD calculation** — The wizard performs exponential regression on your measurements to compute the optimal TD value with a confidence score (High/Medium/Low/Very Low).
+5. **Filament library** — Browse 80+ pre-configured filament profiles across 15 brands (Polymaker, Prusament, Sunlu, Overture, Hatchbox, etc.) with community-contributed TD values.
+
+Calibrated filaments display a confidence badge next to their TD value. Higher confidence = more accurate optical simulation = better print results.
+
+### Advanced Optimizer
+
+When **Enhanced color matching** is enabled, Kromacut uses advanced optimization algorithms to find the best filament order:
+
+| Algorithm | When Used | Description |
+|---|---|---|
+| **Exhaustive search** | 1-4 filaments | Evaluates all possible orderings to guarantee the optimal solution. Fast for small sets. |
+| **Simulated Annealing** | 5-8 filaments | Physics-inspired probabilistic search that escapes local minima via controlled randomness. Balances quality and speed. |
+| **Genetic Algorithm** | 9+ filaments | Evolution-inspired population-based search with crossover and mutation. Best for large filament sets where exhaustive search is prohibitive (8! = 40,320 permutations). |
+| **Auto** | Default | Automatically selects the best algorithm based on filament count and search space size. |
+
+The optimizer displays metadata after generation:
+- **Algorithm used** — Which method was selected
+- **Quality score** — Lower is better (weighted DeltaE + penalties)
+- **Iterations** — How many orderings were evaluated
+- **Converged** — Whether the algorithm reached a stable solution
+- **Cache hit** — Whether results were retrieved from cache (instant)
+
+**Optimizer seed** — Set a random seed for reproducible results across runs. Useful for A/B testing different configurations.
+
+### Region Weighting
+
+Prioritize accuracy in specific image regions during optimization:
+
+| Mode | Description |
+|---|---|
+| **Uniform** | All pixels weighted equally (default). |
+| **Center** | Gaussian falloff from center — faces and subjects in the middle get higher priority. |
+| **Edge** | Sobel edge detection — high-contrast boundaries prioritized over flat regions. |
+
+Region weighting is most useful when filament budget is limited and you want the optimizer to focus on visually important areas.
+
 ### Options
 
 | Option | Description |
 |---|---|
 | **Max Height** | Constrains the total model height (mm). When set below the auto-calculated ideal, zones are uniformly compressed. Leave blank or click `Auto` for the physics-derived default. |
-| **Enhanced color matching** | Optimizes filament ordering for best color reproduction rather than simple luminance sorting. For ≤6 filaments, all permutations of all non-empty subsets are evaluated exhaustively. For >6, a greedy heuristic builds the sequence one filament at a time. Scoring considers weighted DeltaE accuracy, height spread, layer count, and transition waste. |
+| **Enhanced color matching** | Optimizes filament ordering for best color reproduction rather than simple luminance sorting. Uses advanced algorithms (exhaustive, simulated annealing, genetic) automatically selected based on filament count. Scoring considers weighted DeltaE accuracy, height spread, layer count, and transition waste. |
 | **Allow repeated filament swaps** | (Requires Enhanced color matching) Allows a filament to appear more than once in the stack. This creates intermediate blended colors — for example, a thin white layer over red produces pink. The algorithm greedily inserts up to 4 extra swaps, each at the position that best improves the score. |
 | **Height dithering** | (Requires Enhanced color matching) Applies block-aware Floyd-Steinberg error diffusion to the quantized height map. Instead of sharp stair-steps between layer heights, dithering produces a stippled gradient that simulates intermediate heights, resulting in smoother tonal transitions in the print. Edge pixels between different heights are protected from dithering to avoid staircase artifacts. |
 | **Dither line width** | (Requires Height dithering) Controls the minimum dot size for the dither pattern in mm. This should roughly match your printer's line/nozzle width so dither dots are actually printable. Default: `0.42 mm`. |
+| **Optimizer algorithm** | Choose which optimization algorithm to use: Auto (recommended), Exhaustive, Simulated Annealing, or Genetic. Auto selects the best algorithm based on search space size. |
+| **Optimizer seed** | Set a random seed for reproducible optimizer results. Leave blank for random behavior. Useful for testing and comparing configurations. |
+| **Region weighting** | Prioritize specific image regions: Uniform (equal), Center (Gaussian falloff), or Edge (Sobel detection). Helps focus quality budget on important areas. |
 
 ### Filament profiles
 
@@ -117,9 +180,12 @@ When auto-paint is active and filaments are defined, the UI displays a **Transit
 1. Load an image into Kromacut.
 2. Switch to the **Auto-paint** tab (inside the 3D controls panel).
 3. Click **Add Filament** and configure each filament's color and TD to match your real filament stock.
-4. (Optional) Enable **Enhanced color matching** for better results with complex images.
-5. The 3D preview updates automatically. Adjust **Max Height** if the model is too tall.
-6. Export the model via **Download STL** or **Download 3MF** and follow the printed swap plan.
+   - **Tip:** Use the calibration wizard (calibrate icon on each row) to measure accurate TD values, or browse the filament library for pre-configured profiles.
+4. (Optional) Enable **Enhanced color matching** for better results with complex images. The optimizer will automatically select the best algorithm (exhaustive, simulated annealing, or genetic) based on your filament count.
+5. (Optional) Set **Region weighting** to Center or Edge to prioritize accuracy in visually important areas.
+6. The 3D preview updates automatically. Adjust **Max Height** if the model is too tall.
+7. Use the **layer-by-layer preview slider** at the bottom of the 3D view to verify color transitions.
+8. Export the model via **Download STL** or **Download 3MF** and follow the printed swap plan.
 
 ## 3MF Export (Preview)
 
