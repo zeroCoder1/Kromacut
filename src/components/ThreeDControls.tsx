@@ -29,6 +29,7 @@ export type { Filament, ThreeDControlsStateShape } from '../types';
 
 interface ThreeDControlsProps {
     swatches: Swatch[] | null;
+    imageDimensions: { width: number; height: number } | null;
     onChange?: (state: ThreeDControlsStateShape) => void;
     /**
      * Persisted state from a previous mount used to hydrate this component
@@ -37,7 +38,7 @@ interface ThreeDControlsProps {
     persisted?: ThreeDControlsStateShape | null;
 }
 
-export default function ThreeDControls({ swatches, onChange, persisted }: ThreeDControlsProps) {
+export default function ThreeDControls({ swatches, imageDimensions, onChange, persisted }: ThreeDControlsProps) {
     // --- Filaments ---
     const { filaments, setFilaments, addFilament, removeFilament, updateFilament } = useFilaments({
         initial: persisted?.filaments?.length ? persisted.filaments : undefined,
@@ -89,6 +90,17 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
     const [heightDithering, setHeightDithering] = useState(false);
     const [ditherLineWidth, setDitherLineWidth] = useState(0.42);
 
+    // --- Optimizer Options ---
+    const [optimizerAlgorithm, setOptimizerAlgorithm] = useState<'exhaustive' | 'simulated-annealing' | 'genetic' | 'auto'>(
+        persisted?.optimizerAlgorithm ?? 'auto'
+    );
+    const [optimizerSeed, setOptimizerSeed] = useState<number | undefined>(
+        persisted?.optimizerSeed
+    );
+    const [regionWeightingMode, setRegionWeightingMode] = useState<'uniform' | 'center' | 'edge'>(
+        persisted?.regionWeightingMode ?? 'uniform'
+    );
+
     const handleEnhancedColorMatchChange = useCallback((v: boolean) => {
         setEnhancedColorMatch(v);
         if (!v) {
@@ -139,7 +151,13 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
             slicerFirstLayerHeight,
             autoPaintMaxHeight,
             enhancedColorMatch,
-            allowRepeatedSwaps
+            allowRepeatedSwaps,
+            {
+                algorithm: persisted?.optimizerAlgorithm ?? 'auto',
+                seed: persisted?.optimizerSeed,
+            },
+            persisted?.regionWeightingMode ?? 'uniform',
+            imageDimensions
         );
     }, [
         paintMode,
@@ -150,6 +168,10 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         autoPaintMaxHeight,
         enhancedColorMatch,
         allowRepeatedSwaps,
+        persisted?.optimizerAlgorithm,
+        persisted?.optimizerSeed,
+        persisted?.regionWeightingMode,
+        imageDimensions,
     ]);
 
     const autoPaintSliceData = useMemo(() => {
@@ -186,6 +208,9 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                 allowRepeatedSwaps,
                 heightDithering,
                 ditherLineWidth,
+                optimizerAlgorithm,
+                optimizerSeed,
+                regionWeightingMode,
                 autoPaintResult,
                 autoPaintSwatches: autoPaintSliceData.virtualSwatches,
                 autoPaintFilamentSwatches: autoPaintSliceData.filamentSwatches,
@@ -200,6 +225,9 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                 pixelSize,
                 filaments,
                 paintMode,
+                optimizerAlgorithm,
+                optimizerSeed,
+                regionWeightingMode,
             });
         }
     }, [
@@ -216,6 +244,9 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
         allowRepeatedSwaps,
         heightDithering,
         ditherLineWidth,
+        optimizerAlgorithm,
+        optimizerSeed,
+        regionWeightingMode,
         autoPaintResult,
         autoPaintSliceData,
     ]);
@@ -297,6 +328,12 @@ export default function ThreeDControls({ swatches, onChange, persisted }: ThreeD
                     setHeightDithering={setHeightDithering}
                     ditherLineWidth={ditherLineWidth}
                     setDitherLineWidth={setDitherLineWidth}
+                    optimizerAlgorithm={optimizerAlgorithm}
+                    setOptimizerAlgorithm={setOptimizerAlgorithm}
+                    optimizerSeed={optimizerSeed}
+                    setOptimizerSeed={setOptimizerSeed}
+                    regionWeightingMode={regionWeightingMode}
+                    setRegionWeightingMode={setRegionWeightingMode}
                 />
 
                 {/* Manual Tab */}
