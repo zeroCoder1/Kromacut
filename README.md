@@ -197,29 +197,43 @@ Kromacut now supports exporting directly to `.3mf` format. This file format pres
 
 ## Transmission Distance (TD) — what it is and how to use it here
 
-Transmission Distance (TD) is the concept HueForge uses to produce perceptual intermediate shades by stacking translucent filament layers: instead of relying purely on opaque color pigments, TD models how light transmits through thin layers of filament and how stacking different colors (and varying thickness) produces new perceived colors. HueForge does a lot of this work automatically for you (generating intermediate shades and mapping them to layer swaps). For a full conceptual description see the HueForge blog: https://shop.thehueforge.com/blogs/news/what-is-hueforge
+Transmission Distance (TD) is the concept HueForge uses to produce perceptual intermediate shades by stacking translucent filament layers: instead of relying purely on opaque color pigments, TD models how light transmits through thin layers of filament and how stacking different colors (and varying thickness) produces new perceived colors. For a full conceptual description see the HueForge blog: https://shop.thehueforge.com/blogs/news/what-is-hueforge
 
-Important notes about Transmission Distance in Kromacut:
+### Two workflow modes in Kromacut:
 
-- Kromacut does NOT compute Transmission Distance or blend shades automatically. All TD-like effects are done manually by you in the app.
-- Recommended workflow when you want TD-style results:
-	1. Reduce your image to a palette with *more colors* than you actually intend to print. The extra colors give you candidate shades to use as intermediate/translucent-looking layers.
-	2. Use the per-color slice heights and ordering controls in the 3D panel to approximate the stacked thicknesses and ordering that would produce the target intermediate shades. Small adjustments to `base slice height`, per-color slice heights, and `layerHeight` change the produced layer numbers and perceived blends.
-	3. Iterate with actual filament on a small test print: translucency and perceived mix depend heavily on filament brand, color, and print settings.
+**1. Auto-paint mode (Automatic TD processing)** — The recommended approach for TD-based prints:
 
-All of the automated Transmission Distance processing that HueForge performs is manual in Kromacut — you are given the building blocks (palette, per-color heights, order, and the 3D preview) and you experiment until you find a stack that gives the visual result you want.
+- **Automatic Beer-Lambert blending** — Kromacut simulates light transmission through stacked filament layers using physically accurate optical models.
+- **Filament-based workflow** — Define your actual filaments (color + TD values) and let the algorithm compute optimal layer stacks automatically.
+- **Calibration wizard** — Measure accurate TD values from physical test prints, or use the built-in filament library with 80+ pre-configured profiles.
+- **Advanced optimizer** — Simulated annealing and genetic algorithms find the best filament ordering for complex images.
+- **Transition zones** — Automatically calculated vertical zones where each filament blends from the color below to its own pure color.
 
-TD test image and quick experiment
+See the [Auto-paint section](#auto-paint-preview) above for full details.
+
+**2. Manual mode (Traditional workflow)** — For users who want complete control:
+
+- Reduce your image to a palette with *more colors* than you actually intend to print. The extra colors give you candidate shades to use as intermediate/translucent-looking layers.
+- Use the per-color slice heights and ordering controls in the 3D panel to approximate the stacked thicknesses and ordering that would produce the target intermediate shades.
+- Small adjustments to `base slice height`, per-color slice heights, and `layerHeight` change the produced layer numbers and perceived blends.
+- Iterate with actual filament on small test prints — translucency and perceived mix depend heavily on filament brand, color, and print settings.
+
+**Recommendation:** Use Auto-paint mode for TD-based prints. It handles the complex Beer-Lambert physics and optimization automatically, producing better results than manual approximation.
+
+### TD test image (for manual mode experimentation)
 
 - This repository includes a small test image `tdTest.png` (found in `src/assets/tdTest.png`).
-- The app header includes a `Load TD Test` button that will load that image into the preview so you can quickly experiment with layer ordering and per-color slice heights.
+- The app header includes a `Load TD Test` button that will load that image into the preview so you can quickly experiment with manual layer ordering and per-color slice heights.
+- This is primarily useful for testing manual mode workflows or understanding how layer heights affect perceived color.
 
-You can try a quick experiment:
+Quick manual workflow experiment:
 
 1. Click `Load TD Test` in the app header.
 2. Reduce colors to your desired number.
-3. Generate and download your 3d model. 
-4. Follow the layer color swap instructions and print your 3d model to see results.  
+3. Switch to Manual mode (3D Controls → Manual tab).
+4. Adjust per-color slice heights and ordering.
+5. Generate and download your 3D model.
+6. Follow the layer color swap instructions and print your 3D model to see results.  
 
 Preview of the included TD test image:
 
