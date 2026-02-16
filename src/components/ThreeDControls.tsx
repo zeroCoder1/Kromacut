@@ -368,29 +368,39 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
                         <Sortable
                             value={displayOrder.map(String)}
                             onValueChange={handleColorOrderChange}
-                            orientation="vertical"
-                        >
+                            orientation="vertical">
                             <SortableContent asChild>
                                 <div className="space-y-2">
-                                    {displayOrder.map((fi, idx) => {
-                                        const s = filtered[fi];
-                                        const val = colorSliceHeights[fi] ?? layerHeight;
-                                        const isFirst = idx === 0;
-                                        const minForRow = isFirst
-                                            ? Math.max(layerHeight, slicerFirstLayerHeight)
-                                            : layerHeight;
-                                        return (
-                                            <ThreeDColorRow
-                                                key={`${s.hex}-${fi}`}
-                                                fi={fi}
-                                                hex={s.hex}
-                                                value={val}
-                                                layerHeight={layerHeight}
-                                                minHeight={minForRow}
-                                                onChange={onRowChange}
-                                            />
-                                        );
-                                    })}
+                                    {displayOrder.length > 64 ? (
+                                        <div className="p-4 bg-destructive/10 border border-destructive/20 rounded-md text-sm text-destructive-foreground">
+                                            <p className="font-semibold mb-2">Too many colors ({displayOrder.length})</p>
+                                            <p>
+                                                The image has more than 64 unique colors. Please reduce
+                                                the image to fewer colors in 2D mode using the quantization
+                                                tools before switching to 3D mode.
+                                            </p>
+                                        </div>
+                                    ) : (
+                                        displayOrder.map((fi, idx) => {
+                                            const s = filtered[fi];
+                                            const val = colorSliceHeights[fi] ?? layerHeight;
+                                            const isFirst = idx === 0;
+                                            const minForRow = isFirst
+                                                ? Math.max(layerHeight, slicerFirstLayerHeight)
+                                                : layerHeight;
+                                            return (
+                                                <ThreeDColorRow
+                                                    key={`${s.hex}-${fi}`}
+                                                    fi={fi}
+                                                    hex={s.hex}
+                                                    value={val}
+                                                    layerHeight={layerHeight}
+                                                    minHeight={minForRow}
+                                                    onChange={onRowChange}
+                                                />
+                                            );
+                                        })
+                                    )}
                                 </div>
                             </SortableContent>
                             <SortableOverlay>

@@ -151,6 +151,13 @@ export default function ThreeDView({
             lastRebuildRef.current = rebuildSignal;
         }
 
+        // Don't build if there are no layers configured
+        if (!colorOrder || colorOrder.length === 0 || !swatches || swatches.length === 0) {
+            modelGroup.clear();
+            setIsBuilding(false);
+            return;
+        }
+
         // Stable key of inputs to avoid duplicate builds when references unchanged
         const paramsKey = JSON.stringify({
             imageSrc,
