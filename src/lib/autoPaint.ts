@@ -17,6 +17,14 @@
  */
 
 import type { Filament } from '../types';
+import { computeProfileConfidence } from './calibration';
+import {
+    optimizeFilamentOrder,
+    type OptimizerOptions,
+    type OptimizerResult,
+    type ScoringContext,
+} from './optimizer';
+import { generateCenterWeightedMapSimple } from './regionWeighting';
 
 /** RGB color representation (0-255 range) */
 export interface RGB {
@@ -65,6 +73,21 @@ export interface AutoPaintResult {
     compressionRatio: number; // 1.0 = no compression, 0.5 = 50% compressed
     filamentOrder: string[]; // Filament IDs in order (dark to light)
     transitionZones: TransitionZone[]; // Detailed zone info
+    // Confidence metrics
+    confidence: number; // Overall confidence score (0-1)
+    confidenceFactors: {
+        calibrationQuality: number; // 0-1: Quality of filament calibrations
+        filamentCoverage: number; // 0-1: How well filaments cover image colors
+        compressionImpact: number; // 0-1: Impact of height compression
+    };
+    // Optimizer metadata (for advanced optimizer only)
+    optimizerMetadata?: {
+        algorithm: string; // 'exhaustive' | 'simulated-annealing' | 'genetic'
+        score: number; // Quality score achieved
+        iterations: number; // Iterations performed
+        converged: boolean; // Whether algorithm converged
+        cacheHit: boolean; // Whether result came from cache
+    };
 }
 
 // =============================================================================
@@ -149,6 +172,13 @@ export function deltaE(color1: RGB, color2: RGB): number {
     const lab1 = rgbToLab(color1);
     const lab2 = rgbToLab(color2);
 
+    return deltaELab(lab1, lab2);
+}
+
+/**
+ * Calculate Delta E (CIE76) directly from Lab values
+ */
+export function deltaELab(lab1: Lab, lab2: Lab): number {
     return Math.sqrt(
         Math.pow(lab1.L - lab2.L, 2) + Math.pow(lab1.a - lab2.a, 2) + Math.pow(lab1.b - lab2.b, 2)
     );
@@ -776,6 +806,9 @@ function scoreSequenceAgainstImage(
 /**
  * Find the best filament ordering for the image colors.
  *
+ * If optimizer options are provided, uses the advanced optimizer (simulated annealing, genetic algorithm).
+ * Otherwise, falls back to legacy exhaustive/greedy search.
+ *
  * NOT all filaments need to be used — the algorithm evaluates subsets
  * and only includes filaments that improve color reproduction.
  *
@@ -783,9 +816,83 @@ function scoreSequenceAgainstImage(
  * For >6 filaments, uses a greedy build that adds one filament at a time
  * and stops when no further addition improves the score.
  *
- * @returns Optimal filament ordering (may be a subset of the input)
+ * @returns Optimal filament ordering (may be a subset of the input) and optimizer result
  */
 function findBestFilamentOrder(
+    filaments: Filament[],
+    imageSwatches: Array<{ hex: string; count?: number }>,
+    layerHeight: number,
+    firstLayerHeight: number,
+    optimizerOptions?: Partial<OptimizerOptions>
+): { sortedFilaments: Filament[]; result?: OptimizerResult } {
+    if (filaments.length <= 1) {
+        return { sortedFilaments: [...filaments] };
+    }
+
+    // Use advanced optimizer if options provided
+    if (optimizerOptions) {
+        return findBestFilamentOrderWithOptimizer(
+            filaments,
+            imageSwatches,
+            layerHeight,
+            firstLayerHeight,
+            optimizerOptions
+        );
+    }
+
+    // Legacy implementation
+    return {
+        sortedFilaments: findBestFilamentOrderLegacy(
+            filaments,
+            imageSwatches,
+            layerHeight,
+            firstLayerHeight
+        ),
+    };
+}
+
+/**
+ * Advanced optimizer path using simulated annealing / genetic algorithm
+ */
+function findBestFilamentOrderWithOptimizer(
+    filaments: Filament[],
+    imageSwatches: Array<{ hex: string; count?: number }>,
+    layerHeight: number,
+    firstLayerHeight: number,
+    optimizerOptions: Partial<OptimizerOptions>
+): { sortedFilaments: Filament[]; result: OptimizerResult } {
+    // Cluster image colors into weighted Lab targets
+    const imageTargets = clusterImageColors(imageSwatches, 32, 5.0);
+
+    // Build scoring context
+    const context: ScoringContext = {
+        imageColors: imageTargets,
+        layerHeight,
+        firstLayerHeight,
+        regionWeights: optimizerOptions.regionWeights,
+    };
+
+    // Apply frontlit TD scale
+    const scaledFilaments = filaments.map((f) => ({
+        ...f,
+        td: f.td * FRONTLIT_TD_SCALE,
+    }));
+
+    // Run optimizer
+    const result = optimizeFilamentOrder(scaledFilaments, context, optimizerOptions);
+
+    // Map back to original filaments (unscaled TDs)
+    const sortedFilaments = result.order.map((sf) =>
+        filaments.find((f) => f.id === sf.id)
+    ).filter((f): f is Filament => f !== undefined);
+
+    return { sortedFilaments, result };
+}
+
+/**
+ * Legacy optimizer path (exhaustive for ≤6, greedy for >6)
+ */
+function findBestFilamentOrderLegacy(
     filaments: Filament[],
     imageSwatches: Array<{ hex: string; count?: number }>,
     layerHeight: number,
@@ -1018,6 +1125,7 @@ function buildRepeatedSwapSequence(
  * @param maxHeight - Optional maximum height constraint (undefined = auto)
  * @param enhancedColorMatch - If true, optimize filament ordering for best color reproduction
  * @param allowRepeatedSwaps - If true, allow filaments to appear multiple times in the stack
+ * @param optimizerOptions - Advanced optimizer settings (algorithm, seeding, region weighting)
  * @returns Generated layer segments with zone information
  */
 export function generateAutoLayers(
@@ -1027,7 +1135,10 @@ export function generateAutoLayers(
     firstLayerHeight: number,
     maxHeight?: number,
     enhancedColorMatch?: boolean,
-    allowRepeatedSwaps?: boolean
+    allowRepeatedSwaps?: boolean,
+    optimizerOptions?: Partial<OptimizerOptions>,
+    regionWeightingMode: 'uniform' | 'center' | 'edge' = 'uniform',
+    imageDimensions?: { width: number; height: number } | null
 ): AutoPaintResult {
     // --- STEP 1: VALIDATION ---
     if (filaments.length === 0) {
@@ -1039,6 +1150,12 @@ export function generateAutoLayers(
             compressionRatio: 1,
             filamentOrder: [],
             transitionZones: [],
+            confidence: 0,
+            confidenceFactors: {
+                calibrationQuality: 0,
+                filamentCoverage: 0,
+                compressionImpact: 1,
+            },
         };
     }
 
@@ -1051,20 +1168,58 @@ export function generateAutoLayers(
             compressionRatio: 1,
             filamentOrder: [],
             transitionZones: [],
+            confidence: 0,
+            confidenceFactors: {
+                calibrationQuality: 0,
+                filamentCoverage: 0,
+                compressionImpact: 1,
+            },
         };
     }
 
     // --- STEP 2: DETERMINE FILAMENT ORDERING ---
     let sortedFilaments: Filament[];
+    let optimizerResult: OptimizerResult | undefined;
+
+    // Generate region weight map if dimensions are available and mode is not uniform
+    let regionWeights: Float32Array | undefined;
+    if (imageDimensions && regionWeightingMode !== 'uniform') {
+        if (regionWeightingMode === 'center') {
+            // Center-weighted: prioritize center of image
+            regionWeights = generateCenterWeightedMapSimple(
+                imageDimensions.width,
+                imageDimensions.height,
+                0.5 // strength parameter
+            );
+        } else if (regionWeightingMode === 'edge') {
+            // Edge-weighted: requires pixel data for edge detection, skip for now
+            // TODO: Pass image pixel data for edge detection, fall back to uniform
+            regionWeights = undefined;
+        }
+    }
+
+    // Merge region weights into optimizer options
+    const mergedOptimizerOptions: Partial<OptimizerOptions> | undefined = optimizerOptions
+        ? {
+              ...optimizerOptions,
+              regionWeights: regionWeights ?? optimizerOptions.regionWeights,
+          }
+        : regionWeights
+          ? { regionWeights }
+          : undefined;
 
     if (enhancedColorMatch) {
         // Enhanced: find the ordering that best covers the image's color palette
-        sortedFilaments = findBestFilamentOrder(
+        const orderingResult = findBestFilamentOrder(
             filaments,
             imageSwatches,
             layerHeight,
-            firstLayerHeight
+            firstLayerHeight,
+            mergedOptimizerOptions
         );
+
+        sortedFilaments = orderingResult.sortedFilaments;
+        optimizerResult = orderingResult.result;
 
         // If repeated swaps are also enabled, expand the sequence
         if (allowRepeatedSwaps) {
@@ -1121,7 +1276,15 @@ export function generateAutoLayers(
     const totalHeight =
         compressedZones.length > 0 ? compressedZones[compressedZones.length - 1].endHeight : 0;
 
-    return {
+    // --- STEP 6: CALCULATE CONFIDENCE METRICS ---
+    const confidence = calculateAutoConfidence(
+        filaments,
+        imageSwatches,
+        sortedFilaments,
+        compressionRatio
+    );
+
+    const result: AutoPaintResult = {
         layers,
         totalHeight,
         idealHeight,
@@ -1129,7 +1292,21 @@ export function generateAutoLayers(
         compressionRatio,
         filamentOrder,
         transitionZones: compressedZones,
+        ...confidence,
     };
+
+    // Add optimizer metadata if available
+    if (optimizerResult) {
+        result.optimizerMetadata = {
+            algorithm: optimizerOptions?.algorithm || 'auto',
+            score: optimizerResult.score,
+            iterations: optimizerResult.iterations,
+            converged: optimizerResult.converged,
+            cacheHit: optimizerResult.cacheHit || false,
+        };
+    }
+
+    return result;
 }
 
 /**
@@ -1312,6 +1489,106 @@ export function luminanceToHeight(
     // Linear interpolation from base to total height
     // This gives a smooth gradient where brightness = height
     return baseHeight + normalizedLuminance * (totalHeight - baseHeight);
+}
+
+// =============================================================================
+// CONFIDENCE SCORING
+// =============================================================================
+
+/**
+ * Calculate confidence metrics for auto-paint results.
+ *
+ * Confidence is based on three factors:
+ * 1. Calibration Quality: How well the filaments are calibrated
+ * 2. Filament Coverage: How well the filament colors cover the image palette
+ * 3. Compression Impact: How much the result was compressed from ideal
+ *
+ * @param filaments - Input filaments with their TDs
+ * @param imageSwatches - Image color palette
+ * @param sortedFilaments - Filaments in their optimal order
+ * @param compressionRatio - How much compression was applied (1.0 = none)
+ * @returns Confidence score and detailed factors
+ */
+function calculateAutoConfidence(
+    filaments: Filament[],
+    _imageSwatches: Array<{ hex: string; count?: number }>,
+    sortedFilaments: Filament[],
+    compressionRatio: number
+): {
+    confidence: number;
+    confidenceFactors: {
+        calibrationQuality: number;
+        filamentCoverage: number;
+        compressionImpact: number;
+    };
+} {
+    // 1. CALIBRATION QUALITY
+    // Average confidence of all filament calibrations
+    const calibrationScores = filaments.map((f) =>
+        computeProfileConfidence({
+            calibration: f.calibration,
+            transmissionDistance: f.td,
+        })
+    );
+    const calibrationQuality =
+        calibrationScores.reduce((sum, score) => sum + score, 0) / calibrationScores.length;
+
+    // 2. FILAMENT COVERAGE
+    // How well do the filaments cover the image's color space?
+    // More filaments = better coverage, but diminishing returns after 5-6
+    const filamentCount = filaments.length;
+    let filamentCoverage = 0.5; // Baseline
+
+    if (filamentCount >= 6) {
+        filamentCoverage = 0.95; // Excellent coverage
+    } else if (filamentCount >= 4) {
+        filamentCoverage = 0.75 + (filamentCount - 4) * 0.1; // Good coverage
+    } else if (filamentCount >= 2) {
+        filamentCoverage = 0.5 + (filamentCount - 2) * 0.125; // Moderate coverage
+    } else {
+        filamentCoverage = 0.3; // Limited with only 1 filament
+    }
+
+    // Bonus if filaments have good spread across color space
+    // Check luminance range of sorted filaments
+    if (sortedFilaments.length >= 2) {
+        const luminances = sortedFilaments.map((f) => {
+            const rgb = hexToRgb(f.color);
+            return rgbToLab(rgb).L;
+        });
+        const lumRange = Math.max(...luminances) - Math.min(...luminances);
+        // Good spread is 50+ Lab L units (0-100 scale)
+        if (lumRange >= 50) {
+            filamentCoverage = Math.min(1.0, filamentCoverage + 0.1);
+        }
+    }
+
+    // 3. COMPRESSION IMPACT
+    // Compression reduces accuracy, especially heavy compression
+    // compressionRatio: 1.0 = no compression (perfect)
+    // compressionRatio: 0.5 = 50% compressed (significant quality loss)
+    let compressionImpact = compressionRatio;
+
+    // Nonlinear penalty: light compression (0.9) is OK, heavy (<0.7) is bad
+    if (compressionRatio < 0.9) {
+        compressionImpact = 0.9 * Math.pow(compressionRatio / 0.9, 2);
+    }
+
+    // OVERALL CONFIDENCE
+    // Weighted average with emphasis on calibration
+    const confidence =
+        calibrationQuality * 0.5 + // Calibration is most important
+        filamentCoverage * 0.3 + // Coverage matters
+        compressionImpact * 0.2; // Compression has least weight
+
+    return {
+        confidence,
+        confidenceFactors: {
+            calibrationQuality,
+            filamentCoverage,
+            compressionImpact,
+        },
+    };
 }
 
 // =============================================================================
