@@ -80,7 +80,17 @@ The codebase is shared; vite.config.ts automatically adapts the base path based 
 To share the app:
 1. Use the `.dmg` file from `src-tauri/target/release/bundle/dmg/`
 2. Recipients can drag Kromacut.app to their Applications folder
-3. First launch may require right-click → Open due to Gatekeeper (unsigned app)
+3. **Remove the quarantine attribute** (required for unsigned apps):
+   ```bash
+   xattr -cr /Applications/Kromacut.app
+   ```
+4. Launch the app
+
+**If users see "Kromacut is damaged" error:**
+This happens because the app isn't code-signed. The fix is to remove the quarantine flag that macOS adds to downloaded files:
+```bash
+xattr -cr /Applications/Kromacut.app
+```
 
 ### Automated Releases (GitHub)
 
