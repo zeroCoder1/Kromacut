@@ -5,7 +5,8 @@ import path from 'path';
 
 // https://vite.dev/config/
 export default defineConfig({
-    base: '/Kromacut/',
+    // Only use base path for GitHub Pages, not for Tauri
+    base: process.env.TAURI_ENV_PLATFORM ? '/' : '/Kromacut/',
     plugins: [react(), tailwindcss()],
     resolve: {
         alias: {
