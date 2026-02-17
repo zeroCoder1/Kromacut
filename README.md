@@ -266,6 +266,51 @@ Preview of the included TD test image:
 
 <img src="src/assets/tdTest.png" alt="TD Test Image" width="600" />
 
+## Native Mac App (Tauri)
+
+Kromacut can be built as a **native macOS application** using [Tauri](https://tauri.app/), offering better performance than the web version:
+
+- **Better performance:** Uses native macOS WebKit for faster rendering
+- **Smaller size:** 2-3 MB app vs 100+ MB with Electron
+- **Lower memory usage:** More efficient resource utilization
+- **Native integration:** Better macOS feel and GPU acceleration for Three.js
+
+### Building
+
+```bash
+# Install Rust (one-time setup)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
+
+# Install dependencies
+npm install
+
+# Run in development mode
+npm run tauri:dev
+
+# Build production app
+npm run tauri:build
+```
+
+The production build creates:
+- `Kromacut.app` in `src-tauri/target/release/bundle/macos/`
+- `Kromacut_0.1.0_aarch64.dmg` installer in `src-tauri/target/release/bundle/dmg/`
+
+### Releases
+
+Pre-built native Mac apps are automatically released on GitHub:
+
+1. Download the latest release from the [Releases page](https://github.com/zeroCoder1/Kromacut/releases)
+2. Choose the DMG for your Mac:
+   - **Apple Silicon (M1/M2/M3)**: `*_aarch64.dmg`
+   - **Intel**: `*_x86_64.dmg`
+3. Open the DMG and drag Kromacut to Applications
+4. Right-click → Open on first launch (unsigned app)
+
+To create a new release, see [TAURI.md](TAURI.md#automated-releases-github).
+
+See [TAURI.md](TAURI.md) for complete documentation on development, building, and distribution.
+
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=vycdev/kromacut&type=date&legend=top-left)](https://www.star-history.com/#vycdev/kromacut&type=date&legend=top-left)
