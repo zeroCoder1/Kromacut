@@ -92,7 +92,9 @@ class OptimizerCache {
 
     private getCacheKey(
         filaments: Filament[],
-        context: ScoringContext
+        context: ScoringContext,
+        algorithm?: string,
+        seed?: number
     ): string {
         // Create stable key from filaments and context
         const filamentKey = filaments
@@ -105,20 +107,25 @@ class OptimizerCache {
             .map((c) => `${c.L.toFixed(1)},${c.a.toFixed(1)},${c.b.toFixed(1)}`)
             .join('|');
 
-        return `${filamentKey}__${imageKey}__${context.layerHeight}__${context.firstLayerHeight}`;
+        const algoKey = algorithm ?? 'auto';
+        const seedKey = seed ?? 0;
+
+        return `${filamentKey}__${imageKey}__${context.layerHeight}__${context.firstLayerHeight}__${algoKey}__${seedKey}`;
     }
 
-    get(filaments: Filament[], context: ScoringContext): OptimizerResult | null {
-        const key = this.getCacheKey(filaments, context);
+    get(filaments: Filament[], context: ScoringContext, algorithm?: string, seed?: number): OptimizerResult | null {
+        const key = this.getCacheKey(filaments, context, algorithm, seed);
         return this.cache.get(key) || null;
     }
 
     set(
         filaments: Filament[],
         context: ScoringContext,
-        result: OptimizerResult
+        result: OptimizerResult,
+        algorithm?: string,
+        seed?: number
     ): void {
-        const key = this.getCacheKey(filaments, context);
+        const key = this.getCacheKey(filaments, context, algorithm, seed);
 
         // Evict oldest if at capacity
         if (this.cache.size >= this.maxSize) {
@@ -522,6 +529,9 @@ export function optimizeFilamentOrder(
     context: ScoringContext,
     options: Partial<OptimizerOptions> = {}
 ): OptimizerResult {
+    // Determine if user provided explicit seed (for caching purposes)
+    const hasExplicitSeed = options.seed !== undefined;
+
     const opts: OptimizerOptions = {
         algorithm: 'auto',
         seed: Date.now(),
@@ -529,15 +539,7 @@ export function optimizeFilamentOrder(
         ...options,
     };
 
-    // Check cache first
-    if (opts.cachingEnabled) {
-        const cached = globalCache.get(filaments, context);
-        if (cached) {
-            return { ...cached, cacheHit: true };
-        }
-    }
-
-    // Auto-select algorithm based on problem size
+    // Auto-select algorithm based on problem size (before cache check)
     let algorithm = opts.algorithm;
     if (algorithm === 'auto') {
         if (filaments.length <= 6) {
@@ -546,6 +548,14 @@ export function optimizeFilamentOrder(
             algorithm = 'simulated-annealing';
         } else {
             algorithm = 'genetic';
+        }
+    }
+
+    // Only check cache if user provided explicit seed (random seeds should not be cached)
+    if (opts.cachingEnabled && hasExplicitSeed) {
+        const cached = globalCache.get(filaments, context, algorithm, opts.seed);
+        if (cached) {
+            return { ...cached, cacheHit: true };
         }
     }
 
@@ -565,9 +575,9 @@ export function optimizeFilamentOrder(
             throw new Error(`Unknown algorithm: ${algorithm}`);
     }
 
-    // Cache result
-    if (opts.cachingEnabled) {
-        globalCache.set(filaments, context, result);
+    // Only cache if user provided explicit seed (don't cache random results)
+    if (opts.cachingEnabled && hasExplicitSeed) {
+        globalCache.set(filaments, context, result, algorithm, opts.seed);
     }
 
     return result;
