@@ -305,7 +305,13 @@ Pre-built native Mac apps are automatically released on GitHub:
    - **Apple Silicon (M1/M2/M3)**: `*_aarch64.dmg`
    - **Intel**: `*_x86_64.dmg`
 3. Open the DMG and drag Kromacut to Applications
-4. Right-click → Open on first launch (unsigned app)
+4. Remove quarantine attribute:
+   ```bash
+   xattr -cr /Applications/Kromacut.app
+   ```
+5. Launch the app
+
+**"Kromacut is damaged" error?** The app isn't code-signed. Run `xattr -cr /Applications/Kromacut.app` in Terminal to fix it.
 
 To create a new release, see [TAURI.md](TAURI.md#automated-releases-github).
 
