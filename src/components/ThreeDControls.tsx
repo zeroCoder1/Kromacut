@@ -153,10 +153,10 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
             enhancedColorMatch,
             allowRepeatedSwaps,
             {
-                algorithm: persisted?.optimizerAlgorithm ?? 'auto',
-                seed: persisted?.optimizerSeed,
+                algorithm: optimizerAlgorithm,
+                seed: optimizerSeed,
             },
-            persisted?.regionWeightingMode ?? 'uniform',
+            regionWeightingMode,
             imageDimensions
         );
     }, [
@@ -168,9 +168,9 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
         autoPaintMaxHeight,
         enhancedColorMatch,
         allowRepeatedSwaps,
-        persisted?.optimizerAlgorithm,
-        persisted?.optimizerSeed,
-        persisted?.regionWeightingMode,
+        optimizerAlgorithm,
+        optimizerSeed,
+        regionWeightingMode,
         imageDimensions,
     ]);
 
