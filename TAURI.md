@@ -127,9 +127,43 @@ You can also trigger the workflow manually from the Actions tab on GitHub.
 - `Kromacut_VERSION_aarch64.dmg` - Apple Silicon (M1/M2/M3)
 - `Kromacut_VERSION_x86_64.dmg` - Intel Macs
 
-### Code Signing (Optional)
+### Code Signing & Notarization (Future Enhancement)
 
-For signed distribution, you'll need an Apple Developer account and code signing certificate.
+Currently, the app is **ad-hoc signed** (configured with `signingIdentity: "-"` in tauri.conf.json). This allows the app to run but users must remove the quarantine attribute after downloading.
+
+**To eliminate the quarantine requirement entirely**, you would need to:
+
+1. **Enroll in Apple Developer Program** ($99/year)
+   - Visit: https://developer.apple.com/programs/
+
+2. **Obtain a Developer ID Application certificate**
+   - Issued through your Apple Developer account
+   - Allows distribution outside the Mac App Store
+
+3. **Configure Tauri with your signing identity**
+   ```json
+   "macOS": {
+     "signingIdentity": "Developer ID Application: Your Name (TEAM_ID)",
+     "entitlements": "path/to/entitlements.plist"
+   }
+   ```
+
+4. **Notarize the app with Apple**
+   - Apple scans the app for malicious content
+   - Adds a "ticket" that tells Gatekeeper the app is safe
+   - Required for apps distributed outside the App Store as of macOS 10.15+
+
+**Benefits of notarization:**
+- ✅ No quarantine warnings for users
+- ✅ No `xattr` command needed
+- ✅ Professional distribution
+- ✅ Users can simply double-click to install
+- ✅ Better trust and user experience
+
+**Current state (v2.1):**
+- Ad-hoc signing is enabled
+- Users must run: `sudo xattr -d com.apple.quarantine /Applications/Kromacut.app`
+- This is acceptable for personal use and small-scale distribution
 
 ## Updating
 
