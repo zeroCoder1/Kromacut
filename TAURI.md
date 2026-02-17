@@ -82,15 +82,16 @@ To share the app:
 2. Recipients can drag Kromacut.app to their Applications folder
 3. **Remove the quarantine attribute** (required for unsigned apps):
    ```bash
-   xattr -cr /Applications/Kromacut.app
+   sudo xattr -d com.apple.quarantine /Applications/Kromacut.app
    ```
 4. Launch the app
 
 **If users see "Kromacut is damaged" error:**
 This happens because the app isn't code-signed. The fix is to remove the quarantine flag that macOS adds to downloaded files:
 ```bash
-xattr -cr /Applications/Kromacut.app
+sudo xattr -d com.apple.quarantine /Applications/Kromacut.app
 ```
+Enter your password when prompted.
 
 ### Automated Releases (GitHub)
 
