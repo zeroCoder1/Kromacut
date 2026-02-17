@@ -60,11 +60,7 @@ jobs:
                       
                       3. **Remove quarantine attribute** (required for unsigned apps):
                          ```bash
-                         xattr -cr /Applications/Kromacut.app
-                         ```
-                         Or open Terminal and run:
-                         ```bash
-                         xattr -d com.apple.quarantine /Applications/Kromacut.app
+                         sudo xattr -d com.apple.quarantine /Applications/Kromacut.app
                          ```
                       
                       4. **Launch** the app from Applications
@@ -73,9 +69,9 @@ jobs:
                       
                       If macOS says the app is "damaged," it's because the app isn't code-signed. Run this command in Terminal:
                       ```bash
-                      xattr -cr /Applications/Kromacut.app
+                      sudo xattr -d com.apple.quarantine /Applications/Kromacut.app
                       ```
-                      Then try opening the app again. This removes the quarantine flag macOS adds to downloaded files.
+                      Enter your password when prompted. This removes the quarantine flag macOS adds to downloaded files.
                       
                       ### Features
                       - Native macOS performance with WebKit
