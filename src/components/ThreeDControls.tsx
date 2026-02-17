@@ -154,7 +154,7 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
             allowRepeatedSwaps,
             {
                 algorithm: optimizerAlgorithm,
-                seed: optimizerSeed,
+                ...(optimizerSeed !== undefined && { seed: optimizerSeed }),
             },
             regionWeightingMode,
             imageDimensions
