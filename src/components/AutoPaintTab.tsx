@@ -517,14 +517,14 @@ export default function AutoPaintTab({
 
                     {/* Optimizer Settings */}
                     {filaments.length > 0 && (
-                        <div className="space-y-3 pt-2">
+                        <div className={`space-y-3 pt-2 transition-opacity ${enhancedColorMatch ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
                             <div className="h-px bg-border/50" />
                             <div className="space-y-1">
                                 <Label className="text-xs font-semibold text-foreground">
                                     Optimizer Settings
                                 </Label>
                                 <p className="text-[10px] text-muted-foreground">
-                                    Advanced filament ordering optimization
+                                    Advanced filament ordering optimization (requires enhanced color matching)
                                 </p>
                             </div>
                             <div className="space-y-2">
@@ -532,7 +532,7 @@ export default function AutoPaintTab({
                                     <Label htmlFor="optimizer-algorithm" className="text-xs text-muted-foreground whitespace-nowrap">
                                         Algorithm
                                     </Label>
-                                    <Select value={optimizerAlgorithm} onValueChange={setOptimizerAlgorithm}>
+                                    <Select value={optimizerAlgorithm} onValueChange={setOptimizerAlgorithm} disabled={!enhancedColorMatch}>
                                         <SelectTrigger id="optimizer-algorithm" className="h-7 text-xs flex-1">
                                             <SelectValue />
                                         </SelectTrigger>
@@ -556,7 +556,7 @@ export default function AutoPaintTab({
                                     <Label htmlFor="region-weighting" className="text-xs text-muted-foreground whitespace-nowrap">
                                         Region priority
                                     </Label>
-                                    <Select value={regionWeightingMode} onValueChange={setRegionWeightingMode}>
+                                    <Select value={regionWeightingMode} onValueChange={setRegionWeightingMode} disabled={!enhancedColorMatch}>
                                         <SelectTrigger id="region-weighting" className="h-7 text-xs flex-1">
                                             <SelectValue />
                                         </SelectTrigger>
@@ -598,6 +598,7 @@ export default function AutoPaintTab({
                                             setOptimizerSeed(val);
                                             setLocalOptimizerSeed(val.toString());
                                         }}
+                                        disabled={!enhancedColorMatch}
                                         onKeyDown={(e) => {
                                             if (e.key === 'Enter') {
                                                 e.currentTarget.blur();
