@@ -487,6 +487,9 @@ function App(): React.ReactElement | null {
                                         autoPaintTotalHeight={
                                             threeDState.autoPaintResult?.totalHeight
                                         }
+                                        autoPaintFilamentOrder={
+                                            threeDState.autoPaintResult?.filamentOrder
+                                        }
                                         enhancedColorMatch={threeDState.enhancedColorMatch}
                                         heightDithering={threeDState.heightDithering}
                                         ditherLineWidth={threeDState.ditherLineWidth}
