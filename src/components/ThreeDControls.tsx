@@ -3,13 +3,9 @@ import { Card } from '@/components/ui/card';
 import ThreeDColorRow from './ThreeDColorRow';
 import { Sortable, SortableContent, SortableOverlay } from '@/components/ui/sortable';
 import { Button } from '@/components/ui/button';
-import { Check, RotateCcw } from 'lucide-react';
+import { Check, RotateCcw, Loader2 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import {
-    generateAutoLayers,
-    autoPaintToSliceHeights,
-    type AutoPaintResult,
-} from '../lib/autoPaint';
+import { autoPaintToSliceHeights } from '../lib/autoPaint';
 import {
     loadPrintSettingsFromStorage,
     savePrintSettingsToStorage,
@@ -19,6 +15,7 @@ import { useFilaments } from '../hooks/useFilaments';
 import { useProfileManager } from '../hooks/useProfileManager';
 import { useColorSlicing } from '../hooks/useColorSlicing';
 import { useSwapPlan } from '../hooks/useSwapPlan';
+import { useAutoPaintWorker } from '../hooks/useAutoPaintWorker';
 import type { Swatch, ThreeDControlsStateShape } from '../types';
 import PrintSettingsCard from './PrintSettingsCard';
 import PrintInstructions from './PrintInstructions';
@@ -136,30 +133,8 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
         persisted,
     });
 
-    // --- Auto-paint ---
-    const autoPaintResult = useMemo<AutoPaintResult | undefined>(() => {
-        if (paintMode !== 'autopaint' || filaments.length === 0 || filtered.length === 0) {
-            return undefined;
-        }
-        return generateAutoLayers(
-            filaments,
-            filtered.map((s) => ({
-                hex: s.hex,
-                count: (s as Record<string, unknown>).count as number | undefined,
-            })),
-            layerHeight,
-            slicerFirstLayerHeight,
-            autoPaintMaxHeight,
-            enhancedColorMatch,
-            allowRepeatedSwaps,
-            {
-                algorithm: optimizerAlgorithm,
-                ...(optimizerSeed !== undefined && { seed: optimizerSeed }),
-            },
-            regionWeightingMode,
-            imageDimensions
-        );
-    }, [
+    // --- Auto-paint (runs in Web Worker to avoid blocking the UI) ---
+    const { autoPaintResult, isComputing: isAutoPaintComputing } = useAutoPaintWorker({
         paintMode,
         filaments,
         filtered,
@@ -172,7 +147,7 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
         optimizerSeed,
         regionWeightingMode,
         imageDimensions,
-    ]);
+    });
 
     const autoPaintSliceData = useMemo(() => {
         if (!autoPaintResult) return undefined;
@@ -257,10 +232,20 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
             <div className="flex justify-end">
                 <Button
                     onClick={handleApply}
-                    className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold transition-all duration-200 shadow-md hover:shadow-lg active:scale-95 gap-1.5"
+                    disabled={isAutoPaintComputing}
+                    className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold transition-all duration-200 shadow-md hover:shadow-lg active:scale-95 gap-1.5 disabled:opacity-60"
                 >
-                    <Check className="w-4 h-4" />
-                    <span>Build 3D Model</span>
+                    {isAutoPaintComputing ? (
+                        <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>Computing...</span>
+                        </>
+                    ) : (
+                        <>
+                            <Check className="w-4 h-4" />
+                            <span>Build 3D Model</span>
+                        </>
+                    )}
                 </Button>
             </div>
 
@@ -319,6 +304,7 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
                     setAutoPaintMaxHeight={setAutoPaintMaxHeight}
                     autoPaintResult={autoPaintResult}
                     autoPaintSliceData={autoPaintSliceData}
+                    isComputing={isAutoPaintComputing}
                     filteredCount={filtered.length}
                     enhancedColorMatch={enhancedColorMatch}
                     setEnhancedColorMatch={handleEnhancedColorMatchChange}

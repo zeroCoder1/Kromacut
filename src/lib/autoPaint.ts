@@ -1298,7 +1298,7 @@ export function generateAutoLayers(
     // Add optimizer metadata if available
     if (optimizerResult) {
         result.optimizerMetadata = {
-            algorithm: optimizerOptions?.algorithm || 'auto',
+            algorithm: optimizerResult.resolvedAlgorithm || optimizerOptions?.algorithm || 'auto',
             score: optimizerResult.score,
             iterations: optimizerResult.iterations,
             converged: optimizerResult.converged,

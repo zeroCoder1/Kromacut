@@ -1072,6 +1072,7 @@ export default function ThreeDView({
         rebuildSignal,
         autoPaintEnabled,
         autoPaintTotalHeight,
+        autoPaintFilamentOrder,
         enhancedColorMatch,
         heightDithering,
         ditherLineWidth,

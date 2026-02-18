@@ -2,7 +2,7 @@ import React from 'react';
 import { Card } from '@/components/ui/card';
 import { NumberInput, Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Plus, Trash2, Sparkles, Save, Download, Upload, FilePlus, BadgeCheck } from 'lucide-react';
+import { Plus, Trash2, Sparkles, Save, Download, Upload, FilePlus, BadgeCheck, Loader2 } from 'lucide-react';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import {
@@ -58,6 +58,7 @@ interface AutoPaintTabProps {
     setAutoPaintMaxHeight: (v: number | undefined) => void;
     autoPaintResult?: AutoPaintResult;
     autoPaintSliceData?: AutoPaintSliceData;
+    isComputing?: boolean;
 
     // Image colors
     filteredCount: number;
@@ -105,6 +106,7 @@ export default function AutoPaintTab({
     setAutoPaintMaxHeight,
     autoPaintResult,
     autoPaintSliceData,
+    isComputing = false,
     filteredCount,
     enhancedColorMatch,
     setEnhancedColorMatch,
@@ -416,6 +418,12 @@ export default function AutoPaintTab({
                                                 {autoPaintResult.autoHeight.toFixed(1)}mm)
                                             </span>
                                         )}
+                                </div>
+                            )}
+                            {isComputing && (
+                                <div className="flex items-center gap-1.5 text-[10px] text-primary">
+                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                    <span>Optimizing filament order...</span>
                                 </div>
                             )}
                         </div>
@@ -762,7 +770,7 @@ export default function AutoPaintTab({
                                         <div className="text-center p-2 rounded bg-background">
                                             <div className="text-muted-foreground mb-1">Algorithm</div>
                                             <div className="font-semibold text-foreground capitalize">
-                                                {autoPaintResult.optimizerMetadata.algorithm.replace('-', ' ')}
+                                                {autoPaintResult.optimizerMetadata.algorithm.replace(/-/g, ' ')}
                                             </div>
                                         </div>
                                         <div className="text-center p-2 rounded bg-background">
@@ -777,6 +785,14 @@ export default function AutoPaintTab({
                                                 {autoPaintResult.optimizerMetadata.iterations.toLocaleString()}
                                             </div>
                                         </div>
+                                    </div>
+                                    {/* Filament order determined by optimizer */}
+                                    <div className="text-[10px] text-muted-foreground">
+                                        <span className="font-medium">Order: </span>
+                                        {autoPaintResult.filamentOrder.map((fid) => {
+                                            const fil = filaments.find((f) => f.id === fid);
+                                            return fil ? (fil.name || fil.brand || fil.color) : fid.slice(0, 4);
+                                        }).join(' → ')}
                                     </div>
                                     <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
                                         {autoPaintResult.optimizerMetadata.cacheHit && (

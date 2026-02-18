@@ -36,6 +36,7 @@ export interface OptimizerResult {
     iterations: number; // Iterations performed
     converged: boolean; // Whether algorithm converged
     cacheHit?: boolean; // Whether result came from cache
+    resolvedAlgorithm?: string; // Actual algorithm used (after 'auto' resolution)
 }
 
 export interface ScoringContext {
@@ -574,6 +575,9 @@ export function optimizeFilamentOrder(
         default:
             throw new Error(`Unknown algorithm: ${algorithm}`);
     }
+
+    // Tag the result with the resolved algorithm
+    result.resolvedAlgorithm = algorithm;
 
     // Only cache if user provided explicit seed (don't cache random results)
     if (opts.cachingEnabled && hasExplicitSeed) {
