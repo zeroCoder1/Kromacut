@@ -21,6 +21,7 @@ interface ThreeDViewProps {
     // Auto-paint mode props
     autoPaintEnabled?: boolean;
     autoPaintTotalHeight?: number; // Total model height when auto-paint is enabled
+    autoPaintFilamentOrder?: string[]; // Filament IDs in order (for cache invalidation)
     enhancedColorMatch?: boolean; // Use color-distance mapping instead of luminance
     heightDithering?: boolean; // Floyd-Steinberg error diffusion on height map
     ditherLineWidth?: number; // Minimum dot size in mm for dithering
@@ -82,6 +83,7 @@ export default function ThreeDView({
     rebuildSignal = 0,
     autoPaintEnabled = false,
     autoPaintTotalHeight,
+    autoPaintFilamentOrder,
     enhancedColorMatch = false,
     heightDithering = false,
     ditherLineWidth = 0.42,
@@ -170,6 +172,7 @@ export default function ThreeDView({
             heightScale,
             stepped,
             pixelColumns,
+            autoPaintFilamentOrder, // Include filament order to detect optimizer changes
         });
         if (paramsKey === lastParamsKeyRef.current) return; // nothing changed logically
         lastParamsKeyRef.current = paramsKey;
