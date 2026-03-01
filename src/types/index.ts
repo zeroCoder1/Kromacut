@@ -1,4 +1,5 @@
 import type { AutoPaintResult } from '../lib/autoPaint';
+import type { CalibrationResult } from '../lib/calibration';
 
 export type Swatch = { hex: string; a: number };
 
@@ -15,11 +16,18 @@ export interface Filament {
     id: string;
     color: string;
     td: number;
+    // Optional calibration data for higher confidence
+    calibration?: CalibrationResult;
+    // Filament metadata
+    brand?: string;
+    name?: string;
+    notes?: string;
 }
 
 export interface ThreeDControlsStateShape {
     layerHeight: number;
     slicerFirstLayerHeight: number;
+    calibrationLayerHeight?: number;
     colorSliceHeights: number[];
     colorOrder: number[];
     filteredSwatches: Swatch[];
@@ -31,6 +39,10 @@ export interface ThreeDControlsStateShape {
     allowRepeatedSwaps?: boolean;
     heightDithering?: boolean;
     ditherLineWidth?: number;
+    // Optimizer options
+    optimizerAlgorithm?: 'exhaustive' | 'simulated-annealing' | 'genetic' | 'auto';
+    optimizerSeed?: number;
+    regionWeightingMode?: 'uniform' | 'center' | 'edge';
     // Auto-paint computed state (only used when paintMode is 'autopaint')
     autoPaintResult?: AutoPaintResult;
     autoPaintSwatches?: Swatch[];
