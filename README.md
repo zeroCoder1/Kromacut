@@ -8,7 +8,7 @@ Open-source HueForge-style tool for converting images into stacked, color-layere
 
 Kromacut is a browser-first app that converts images into multi-color lithophane 3D prints. It offers two powerful workflows:
 
-**Auto-paint mode** — Define your actual filaments (color + Transmission Distance), and Kromacut automatically computes optimal layer stacks using physically accurate Beer-Lambert optical blending. Features include a calibration wizard, 80+ filament library, advanced optimizer (simulated annealing/genetic algorithms), and region weighting for spatial priority.
+**Auto-paint mode** — Define your actual filaments (color + Transmission Distance), and Kromacut automatically computes optimal layer stacks using physically accurate Beer-Lambert optical blending. Features include a calibration wizard, advanced optimizer (simulated annealing/genetic algorithms), and region weighting for spatial priority.
 
 **Manual mode** — Reduce images to a small palette, manually tweak per-color layer heights and ordering, and fine-tune every aspect of the stack with complete control.
 
@@ -65,7 +65,7 @@ Another minimal test you can try yourself in the app header: the Transmission Di
 2. Switch to the **Auto-paint** tab in the 3D controls panel.
 3. Click **Add Filament** and configure your filaments:
    - Use the **calibration wizard** (calibrate icon) to measure accurate TD values, or
-   - Browse the **filament library** for 80+ pre-configured profiles.
+   - Enter TD values manually.
 4. Enable **Enhanced color matching** for optimal results (auto-selects best algorithm).
 5. (Optional) Set **Region weighting** to Center or Edge to prioritize important areas.
 6. Use the **layer-by-layer preview slider** to verify transitions.
@@ -132,7 +132,7 @@ Each filament row in the Auto-paint tab includes a **calibration wizard** to hel
 2. **Print test samples** — The wizard guides you through printing 3-5 samples of different thicknesses (e.g., 0.3mm, 0.6mm, 1.0mm, 1.5mm, 2.0mm).
 3. **Measure luminance** — Use a light meter or camera to measure how much light passes through each sample, or visually compare against reference colors.
 4. **Automatic TD calculation** — The wizard performs exponential regression on your measurements to compute the optimal TD value with a confidence score (High/Medium/Low/Very Low).
-5. **Filament library** — Browse 80+ pre-configured filament profiles across 15 brands (Polymaker, Prusament, Sunlu, Overture, Hatchbox, etc.) with community-contributed TD values.
+5. **Save profile** — Keep calibrated filaments in a reusable profile for future projects.
 
 Calibrated filaments display a confidence badge next to their TD value. Higher confidence = more accurate optical simulation = better print results.
 
@@ -207,7 +207,7 @@ When auto-paint is active and filaments are defined, the UI displays a **Transit
 1. Load an image into Kromacut.
 2. Switch to the **Auto-paint** tab (inside the 3D controls panel).
 3. Click **Add Filament** and configure each filament's color and TD to match your real filament stock.
-   - **Tip:** Use the calibration wizard (calibrate icon on each row) to measure accurate TD values, or browse the filament library for pre-configured profiles.
+   - **Tip:** Use the calibration wizard (calibrate icon on each row) to measure accurate TD values.
 4. (Optional) Enable **Enhanced color matching** for better results with complex images. The optimizer will automatically select the best algorithm (exhaustive, simulated annealing, or genetic) based on your filament count.
 5. (Optional) Set **Region weighting** to Center or Edge to prioritize accuracy in visually important areas.
 6. The 3D preview updates automatically. Adjust **Max Height** if the model is too tall.
@@ -232,7 +232,7 @@ Transmission Distance (TD) is the concept HueForge uses to produce perceptual in
 
 - **Automatic Beer-Lambert blending** — Kromacut simulates light transmission through stacked filament layers using physically accurate optical models.
 - **Filament-based workflow** — Define your actual filaments (color + TD values) and let the algorithm compute optimal layer stacks automatically.
-- **Calibration wizard** — Measure accurate TD values from physical test prints, or use the built-in filament library with 80+ pre-configured profiles.
+- **Calibration wizard** — Measure accurate TD values from physical test prints for each filament.
 - **Advanced optimizer** — Simulated annealing and genetic algorithms find the best filament ordering for complex images.
 - **Transition zones** — Automatically calculated vertical zones where each filament blends from the color below to its own pure color.
 
@@ -271,9 +271,12 @@ Preview of the included TD test image:
 Kromacut can be built as a **native macOS application** using [Tauri](https://tauri.app/), offering better performance than the web version:
 
 - **Better performance:** Uses native macOS WebKit for faster rendering
-- **Smaller size:** 2-3 MB app vs 100+ MB with Electron
+- **Smaller size:** compact native bundle with low runtime overhead
 - **Lower memory usage:** More efficient resource utilization
 - **Native integration:** Better macOS feel and GPU acceleration for Three.js
+- **Automatic updates:** Built-in update checker notifies you of new versions
+
+The desktop app includes an automatic update checker. See [UPDATE_CHECKER.md](UPDATE_CHECKER.md) for details.
 
 ### Building
 
