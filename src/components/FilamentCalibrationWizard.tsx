@@ -166,23 +166,23 @@ export function FilamentCalibrationWizard({
         <>
             <AlertDialogHeader>
                 <AlertDialogTitle>Calibrate Filament TD</AlertDialogTitle>
-                <AlertDialogDescription className="space-y-2">
-                    <p>
-                        Calibrating Transmission Distance (TD) will give you more accurate
-                        auto-paint results.
-                    </p>
-                    <p className="font-semibold">You will need:</p>
-                    <ul className="list-disc list-inside space-y-1 text-sm">
-                        <li>{filamentName}</li>
-                        <li>A 3D printer</li>
-                        <li>A backlit white surface (phone screen works great)</li>
-                        <li>A color picker tool (digital or app)</li>
-                    </ul>
-                    <p className="text-sm text-muted-foreground mt-4">
-                        This process takes about 15-20 minutes including print time.
-                    </p>
-                </AlertDialogDescription>
             </AlertDialogHeader>
+            <div className="space-y-2">
+                <p>
+                    Calibrating Transmission Distance (TD) will give you more accurate
+                    auto-paint results.
+                </p>
+                <p className="font-semibold">You will need:</p>
+                <ul className="list-disc list-inside space-y-1 text-sm">
+                    <li>{filamentName}</li>
+                    <li>A 3D printer</li>
+                    <li>A backlit white surface (phone screen works great)</li>
+                    <li>A color picker tool (digital or app)</li>
+                </ul>
+                <p className="text-sm text-muted-foreground mt-4">
+                    This process takes about 15-20 minutes including print time.
+                </p>
+            </div>
             <AlertDialogFooter>
                 <Button variant="outline" onClick={handleCancel}>
                     Cancel
@@ -257,13 +257,11 @@ export function FilamentCalibrationWizard({
             <>
                 <AlertDialogHeader>
                     <AlertDialogTitle>Step 2: Measure RGB Values</AlertDialogTitle>
-                    <AlertDialogDescription className="space-y-3">
-                        <p className="text-sm">
-                            Place each patch on a backlit white surface and use a color picker to
-                            sample the RGB values from the center.
-                        </p>
-                    </AlertDialogDescription>
                 </AlertDialogHeader>
+                <p className="text-sm mb-4">
+                    Place each patch on a backlit white surface and use a color picker to
+                    sample the RGB values from the center.
+                </p>
 
                 <div className="space-y-4 py-4">
                     {/* Existing measurements */}
@@ -403,12 +401,10 @@ export function FilamentCalibrationWizard({
             <>
                 <AlertDialogHeader>
                     <AlertDialogTitle>Calibration Complete! 🎉</AlertDialogTitle>
-                    <AlertDialogDescription className="space-y-3">
-                        <p className="text-sm">
-                            Your filament has been calibrated successfully.
-                        </p>
-                    </AlertDialogDescription>
                 </AlertDialogHeader>
+                <p className="text-sm mb-4">
+                    Your filament has been calibrated successfully.
+                </p>
 
                 <div className="space-y-4 py-4">
                     <Card className="p-4 space-y-3">
@@ -470,8 +466,15 @@ export function FilamentCalibrationWizard({
     };
 
     return (
-        <AlertDialog open={open} onOpenChange={onClose}>
-            <AlertDialogContent className="relative max-w-2xl max-h-[90vh] overflow-y-auto">
+        <AlertDialog open={open} onOpenChange={(isOpen) => {
+            if (!isOpen) {
+                onClose();
+            }
+        }}>
+            <AlertDialogContent className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 max-w-2xl max-h-[90vh] overflow-y-auto z-50 flex flex-col gap-4 bg-background border border-border p-6 rounded-lg shadow-lg">
+                <AlertDialogDescription className="sr-only">
+                    Filament calibration wizard for measuring transmission distance (TD) values to improve auto-paint results
+                </AlertDialogDescription>
                 <Button
                     variant="ghost"
                     size="icon"
