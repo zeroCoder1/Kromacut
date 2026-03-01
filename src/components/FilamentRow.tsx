@@ -1,27 +1,39 @@
 import React, { useEffect, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Trash2, Wand2 } from 'lucide-react';
+import { Trash2, Wand2, FlaskConical, BadgeCheck } from 'lucide-react';
 import { HexColorPicker } from 'react-colorful';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import type { Filament } from '../types';
 import { estimateTDFromColor } from '../lib/colorUtils';
+import { computeProfileConfidence, getConfidenceLabel, getConfidenceColor } from '../lib/calibration';
 
 interface FilamentRowProps {
     filament: Filament;
     onUpdate: (id: string, updates: Partial<Omit<Filament, 'id'>>) => void;
     onRemove: (id: string) => void;
+    onCalibrate?: (id: string) => void; // Optional calibration callback
 }
 
 const FilamentRow = React.memo(function FilamentRow({
     filament,
     onUpdate,
     onRemove,
+    onCalibrate,
 }: FilamentRowProps) {
     // Local state for the input value to allow free typing
     const [localTd, setLocalTd] = useState<string>(filament.td.toString());
     // Local state for color to allow smooth dragging without frequent parent updates
     const [localColor, setLocalColor] = useState<string>(filament.color);
+
+    // Calculate confidence for this filament
+    const confidence = computeProfileConfidence({
+        calibration: filament.calibration,
+        transmissionDistance: filament.td,
+    });
+    const confidenceLabel = getConfidenceLabel(confidence);
+    const confidenceColorClass = getConfidenceColor(confidence);
+    const isCalibrated = !!filament.calibration;
 
     // Sync local TD state if prop changes externally
     useEffect(() => {
@@ -123,6 +135,31 @@ const FilamentRow = React.memo(function FilamentRow({
             >
                 <Wand2 className="w-4 h-4" />
             </Button>
+
+            {/* Calibration Button & Badge */}
+            {onCalibrate && (
+                <div className="flex items-center gap-1">
+                    {isCalibrated && (
+                        <div className={`flex items-center gap-1 px-2 py-1 rounded-md bg-muted/50 ${confidenceColorClass}`} title={`Confidence: ${confidenceLabel} (${(confidence * 100).toFixed(0)}%)`}>
+                            <BadgeCheck className="w-3 h-3" />
+                            <span className="text-[10px] font-medium">{confidenceLabel}</span>
+                        </div>
+                    )}
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onCalibrate(filament.id)}
+                        className={`h-8 w-8 cursor-pointer ${
+                            isCalibrated
+                                ? 'text-muted-foreground hover:text-blue-600 hover:bg-blue-600/10'
+                                : 'text-muted-foreground hover:text-purple-600 hover:bg-purple-600/10'
+                        }`}
+                        title={isCalibrated ? 'Recalibrate filament' : 'Calibrate filament for accurate TD'}
+                    >
+                        <FlaskConical className="w-4 h-4" />
+                    </Button>
+                </div>
+            )}
 
             {/* Delete Button */}
             <Button
