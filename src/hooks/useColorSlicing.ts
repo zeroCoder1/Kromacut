@@ -35,6 +35,7 @@ export function useColorSlicing({
     const prevOrderRef = useRef<number[]>(
         persisted?.colorOrder ? persisted.colorOrder.slice() : []
     );
+    const prevLayerHeightRef = useRef<number | null>(null);
 
     // guard so we only emit immediately after hydration if needed
     const hydratedRef = useRef<boolean>(false);
@@ -43,6 +44,20 @@ export function useColorSlicing({
             hydratedRef.current = true;
         }
     }, [persisted]);
+
+    // When layer height changes, reset color slice heights to the new layer height
+    useEffect(() => {
+        if (prevLayerHeightRef.current !== null && prevLayerHeightRef.current !== layerHeight) {
+            // Layer height changed: reset all color heights to new layer height
+            if (filtered.length > 0) {
+                const resetHeights = filtered.map(() =>
+                    Number(Math.max(layerHeight, Math.min(10, layerHeight)).toFixed(8))
+                );
+                setColorSliceHeights(resetHeights);
+            }
+        }
+        prevLayerHeightRef.current = layerHeight;
+    }, [layerHeight, filtered.length]);
 
     // Initialize or resize per-color slice heights and preserve ordering when swatches change.
     useEffect(() => {
@@ -100,7 +115,7 @@ export function useColorSlicing({
         prevFilteredRef.current = filtered.slice();
         prevHeightsRef.current = nextHeights.slice();
         prevOrderRef.current = nextOrder.slice();
-    }, [filtered, layerHeight]);
+    }, [filtered]);
 
     const displayOrder = useMemo(() => {
         return colorOrder.length === filtered.length ? colorOrder : filtered.map((_, i) => i);
