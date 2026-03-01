@@ -136,6 +136,23 @@ export default function ThreeDView({
         requestRender();
     }, [previewHeight, modelGroupRef, requestRender]);
 
+    const snapPreviewHeight = (value: number): number => {
+        const bounded = Math.max(0, Math.min(maxModelHeight, value));
+        if (layerHeight <= 0) return bounded;
+
+        const first = Math.max(0, slicerFirstLayerHeight || 0);
+        if (first <= 0) {
+            return Math.max(0, Math.min(maxModelHeight, Math.round(bounded / layerHeight) * layerHeight));
+        }
+
+        if (bounded <= first / 2) return 0;
+        if (bounded <= first + layerHeight / 2) return first;
+
+        const delta = Math.max(0, bounded - first);
+        const snapped = first + Math.round(delta / layerHeight) * layerHeight;
+        return Math.max(0, Math.min(maxModelHeight, snapped));
+    };
+
     // 2. Rebuild mesh geometry whenever inputs change (debounced, progressive, adaptive resolution)
     const buildTokenRef = useRef(0);
     const debounceTimerRef = useRef<number | null>(null);
@@ -1128,10 +1145,10 @@ export default function ThreeDView({
                             </div>
                             <Slider
                                 value={[previewHeight]}
-                                onValueChange={(v) => setPreviewHeight(v[0])}
+                                onValueChange={(v) => setPreviewHeight(snapPreviewHeight(v[0]))}
                                 min={0}
                                 max={maxModelHeight}
-                                step={layerHeight > 0 ? layerHeight : 0.01}
+                                step={0.01}
                                 className="w-full"
                             />
                             <div className="flex justify-between text-[10px] text-muted-foreground">

@@ -27,6 +27,7 @@ export interface Filament {
 export interface ThreeDControlsStateShape {
     layerHeight: number;
     slicerFirstLayerHeight: number;
+    calibrationLayerHeight?: number;
     colorSliceHeights: number[];
     colorOrder: number[];
     filteredSwatches: Swatch[];

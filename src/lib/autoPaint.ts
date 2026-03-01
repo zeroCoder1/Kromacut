@@ -24,7 +24,7 @@ import {
     type OptimizerResult,
     type ScoringContext,
 } from './optimizer';
-import { generateCenterWeightedMapSimple } from './regionWeighting';
+import { generateCenterWeightedMapSimple, generateEdgeWeightedMapSimple } from './regionWeighting';
 
 /** RGB color representation (0-255 range) */
 export interface RGB {
@@ -1192,9 +1192,11 @@ export function generateAutoLayers(
                 0.5 // strength parameter
             );
         } else if (regionWeightingMode === 'edge') {
-            // Edge-weighted: requires pixel data for edge detection, skip for now
-            // TODO: Pass image pixel data for edge detection, fall back to uniform
-            regionWeights = undefined;
+            // Edge-weighted (geometry-based): prioritize border regions.
+            regionWeights = generateEdgeWeightedMapSimple(
+                imageDimensions.width,
+                imageDimensions.height
+            );
         }
     }
 

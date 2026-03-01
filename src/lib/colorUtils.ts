@@ -18,15 +18,12 @@ export function hexLuminance(hex: string): number {
  * Estimate Transmission Distance (TD) from a hex color.
  *
  * TD is related to how much light passes through the filament:
- * - Darker colors absorb more light → higher TD (more layers needed)
- * - Lighter colors are more transparent → lower TD (fewer layers needed)
- * - Saturated colors often have channel-specific absorption patterns
+ * - Darker / more opaque colors usually have lower TD
+ * - Lighter / more translucent colors usually have higher TD
+ * - Saturation and hue can shift TD slightly around the luminance baseline
  *
- * This enhanced algorithm considers:
- * 1. Luminance-based baseline using inverse relationship (darker = higher TD)
- * 2. Saturation effects (desaturated colors are more opaque)
- * 3. Hue-specific adjustments (blues/greens tend to be more translucent)
- * 4. Validation against measured filament library data
+ * This heuristic is intentionally conservative and should be replaced by
+ * measured calibration data whenever possible.
  */
 export function estimateTDFromColor(hex: string): number {
     const h = hex.replace(/^#/, '');
@@ -54,47 +51,46 @@ export function estimateTDFromColor(hex: string): number {
         }
     }
 
-    // Base TD estimation:
-    // - White (lum=1.0): TD ≈ 1.8mm (very translucent)
-    // - Mid-gray (lum=0.5): TD ≈ 4.0mm (moderately opaque)
-    // - Black (lum=0.0): TD ≈ 8.0mm (very opaque)
-    // Inverse relationship: lower luminance = higher TD
-    let estimatedTD = 1.5 + (1.0 - luminance) * 6.5;
+    // Base TD estimation (direct relationship with luminance):
+    // - Black (lum=0.0): TD ≈ 1.0mm (opaque)
+    // - Mid-gray (lum=0.5): TD ≈ 3.9mm
+    // - White (lum=1.0): TD ≈ 6.8mm (translucent)
+    let estimatedTD = 1.0 + luminance * 5.8;
 
     // Saturation adjustment:
-    // Saturated colors are often more translucent than grays of same luminance
-    // because colorants selectively absorb specific wavelengths
+    // Desaturated colors are often more opaque than similarly bright saturated colors.
+    // Increase effect strongest in the mid-luminance range.
     if (luminance > 0.2 && luminance < 0.8) {
-        // Mid-range luminance: saturation reduces TD by up to 1.0mm
-        estimatedTD -= saturation * 1.0;
+        const desaturation = 1 - saturation;
+        estimatedTD -= desaturation * 0.7;
     }
 
     // Hue-specific adjustments based on typical filament behavior:
-    // Yellow/orange (30-90°): More translucent, -0.5mm
+    // Yellow/orange (30-90°): often more translucent, +0.4mm
     if (hue >= 30 && hue < 90 && saturation > 0.3) {
-        estimatedTD -= 0.5;
+        estimatedTD += 0.4;
     }
-    // Blue/cyan (180-240°): Moderately translucent, -0.3mm
+    // Blue/cyan (180-240°): moderately translucent, +0.2mm
     else if (hue >= 180 && hue < 240 && saturation > 0.3) {
-        estimatedTD -= 0.3;
-    }
-    // Red/magenta (330-30° and 270-330°): Less translucent, +0.2mm
-    else if ((hue >= 330 || hue < 30 || (hue >= 270 && hue < 330)) && saturation > 0.3) {
         estimatedTD += 0.2;
+    }
+    // Red/magenta: commonly more opaque, -0.2mm
+    else if ((hue >= 330 || hue < 30 || (hue >= 270 && hue < 330)) && saturation > 0.3) {
+        estimatedTD -= 0.2;
     }
 
     // Special cases for very light colors (whites)
     if (luminance > 0.95) {
-        estimatedTD = 1.8 + (1.0 - luminance) * 3.0; // Range: 1.65-1.8mm
+        estimatedTD = 6.5 + (luminance - 0.95) * 12; // Range: ~6.5-7.1mm
     }
 
     // Special cases for very dark colors (blacks)
     if (luminance < 0.15) {
-        estimatedTD = 7.0 + (0.15 - luminance) * 6.67; // Range: 7.0-8.0mm
+        estimatedTD = 0.8 + luminance * 2.7; // Range: ~0.8-1.2mm
     }
 
     // Clamp to realistic range for PLA filaments
-    estimatedTD = Math.max(1.2, Math.min(8.5, estimatedTD));
+    estimatedTD = Math.max(0.6, Math.min(8.5, estimatedTD));
 
     // Round to 1 decimal place
     return Math.round(estimatedTD * 10) / 10;

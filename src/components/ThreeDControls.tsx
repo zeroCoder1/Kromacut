@@ -78,6 +78,9 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
         initialPrintSettings.slicerFirstLayerHeight
     );
     const [pixelSize, setPixelSize] = useState<number>(initialPrintSettings.pixelSize);
+    const [calibrationLayerHeight, setCalibrationLayerHeight] = useState<number>(
+        persisted?.calibrationLayerHeight ?? initialPrintSettings.layerHeight
+    );
     const [paintMode, setPaintMode] = useState<'manual' | 'autopaint'>(
         persisted?.paintMode ?? 'manual'
     );
@@ -154,6 +157,12 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
         return autoPaintToSliceHeights(autoPaintResult, layerHeight, slicerFirstLayerHeight);
     }, [autoPaintResult, layerHeight, slicerFirstLayerHeight]);
 
+    const instructionColorCount =
+        paintMode === 'autopaint'
+            ? autoPaintResult?.layers.length ?? 0
+            : displayOrder.length;
+    const isInstructionOverLimit = instructionColorCount > 64;
+
     // --- Swap Plan ---
     const { swapPlan, copied, copyToClipboard } = useSwapPlan({
         colorOrder,
@@ -163,6 +172,7 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
         slicerFirstLayerHeight,
         paintMode,
         autoPaintResult,
+        disabled: isInstructionOverLimit,
     });
 
     // --- Apply handler ---
@@ -189,6 +199,7 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
                 autoPaintResult,
                 autoPaintSwatches: autoPaintSliceData.virtualSwatches,
                 autoPaintFilamentSwatches: autoPaintSliceData.filamentSwatches,
+                calibrationLayerHeight,
             });
         } else {
             onChange({
@@ -203,6 +214,7 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
                 optimizerAlgorithm,
                 optimizerSeed,
                 regionWeightingMode,
+                calibrationLayerHeight,
             });
         }
     }, [
@@ -222,8 +234,54 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
         optimizerAlgorithm,
         optimizerSeed,
         regionWeightingMode,
+        calibrationLayerHeight,
         autoPaintResult,
         autoPaintSliceData,
+    ]);
+
+    // --- Apply handler for auto-paint tab ---
+    const handleAutoPaintApply = useCallback(() => {
+        if (!onChange) return;
+
+        if (autoPaintSliceData && autoPaintResult) {
+            onChange({
+                layerHeight,
+                slicerFirstLayerHeight,
+                colorSliceHeights: autoPaintSliceData.colorSliceHeights,
+                colorOrder: autoPaintSliceData.colorOrder,
+                filteredSwatches: autoPaintSliceData.virtualSwatches,
+                pixelSize,
+                filaments,
+                paintMode: 'autopaint',
+                enhancedColorMatch,
+                allowRepeatedSwaps,
+                heightDithering,
+                ditherLineWidth,
+                optimizerAlgorithm,
+                optimizerSeed,
+                regionWeightingMode,
+                autoPaintResult,
+                autoPaintSwatches: autoPaintSliceData.virtualSwatches,
+                autoPaintFilamentSwatches: autoPaintSliceData.filamentSwatches,
+                calibrationLayerHeight,
+            });
+        }
+    }, [
+        onChange,
+        autoPaintSliceData,
+        autoPaintResult,
+        layerHeight,
+        slicerFirstLayerHeight,
+        pixelSize,
+        filaments,
+        enhancedColorMatch,
+        allowRepeatedSwaps,
+        heightDithering,
+        ditherLineWidth,
+        optimizerAlgorithm,
+        optimizerSeed,
+        regionWeightingMode,
+        calibrationLayerHeight,
     ]);
 
     return (
@@ -305,6 +363,8 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
                     autoPaintResult={autoPaintResult}
                     autoPaintSliceData={autoPaintSliceData}
                     isComputing={isAutoPaintComputing}
+                    calibrationLayerHeight={calibrationLayerHeight}
+                    setCalibrationLayerHeight={setCalibrationLayerHeight}
                     filteredCount={filtered.length}
                     enhancedColorMatch={enhancedColorMatch}
                     setEnhancedColorMatch={handleEnhancedColorMatchChange}
@@ -320,6 +380,7 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
                     setOptimizerSeed={setOptimizerSeed}
                     regionWeightingMode={regionWeightingMode}
                     setRegionWeightingMode={setRegionWeightingMode}
+                    onApply={handleAutoPaintApply}
                 />
 
                 {/* Manual Tab */}
@@ -404,6 +465,8 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
                 slicerFirstLayerHeight={slicerFirstLayerHeight}
                 copied={copied}
                 onCopy={copyToClipboard}
+                tooManyColors={isInstructionOverLimit}
+                colorCount={instructionColorCount}
             />
         </div>
     );
