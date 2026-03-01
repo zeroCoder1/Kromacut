@@ -391,6 +391,7 @@ function App(): React.ReactElement | null {
                             ) : (
                                 <ThreeDControls
                                     swatches={swatches}
+                                    imageDimensions={null}
                                     onChange={handleThreeDStateChange}
                                     persisted={threeDState}
                                 />
