@@ -1,8 +1,8 @@
 [package]
 name = "app"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+version = "2.2.0"
+description = "Kromacut - Multi-color lithophane 3D print generator"
+authors = ["vycdev"]
 license = ""
 repository = ""
 edition = "2021"
@@ -23,3 +23,5 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.10.0", features = [] }
 tauri-plugin-log = "2"
+reqwest = { version = "0.12", features = ["json"] }
+tokio = { version = "1", features = ["full"] }

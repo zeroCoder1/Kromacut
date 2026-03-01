@@ -27,6 +27,7 @@ import { useBuildWarning } from './hooks/useBuildWarning';
 import ResizableSplitter from './components/ResizableSplitter';
 import { ControlsPanel } from './components/ControlsPanel';
 import { usePaletteManager } from './hooks/usePaletteManager';
+import { UpdateChecker } from './components/UpdateChecker';
 import {
     AlertDialog,
     AlertDialogContent,
@@ -587,6 +588,9 @@ function App(): React.ReactElement | null {
                     </AlertDialogFooter>
                 </AlertDialogContent>
             </AlertDialog>
+
+            {/* Update checker for Tauri desktop app */}
+            <UpdateChecker />
         </div>
     );
 }
