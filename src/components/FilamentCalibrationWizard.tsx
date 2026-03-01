@@ -6,7 +6,7 @@
  * TD with confidence scoring.
  */
 
-import  { useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import {
     AlertDialog,
     AlertDialogContent,
@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
+import { X } from 'lucide-react';
 import {
     calculateTDFromMeasurements,
     rgbToTransmission,
@@ -48,7 +49,7 @@ export function FilamentCalibrationWizard({
     onClose,
     onComplete,
     filamentColor,
-    filamentName = 'Unknown Filament',
+    filamentName = 'Your filament',
     layerHeight,
     existingMeasurements = [],
 }: FilamentCalibrationWizardProps) {
@@ -59,14 +60,15 @@ export function FilamentCalibrationWizard({
     const [currentLayers, setCurrentLayers] = useState<string>('');
     const [currentRGB, setCurrentRGB] = useState({ r: '', g: '', b: '' });
     const [result, setResult] = useState<CalibrationResult | null>(null);
+    const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
     const { recommended } = getRecommendedLayerCounts(measurements);
 
     const handleAddMeasurement = useCallback(() => {
-        const layers = parseInt(currentLayers);
-        const r = parseInt(currentRGB.r);
-        const g = parseInt(currentRGB.g);
-        const b = parseInt(currentRGB.b);
+        const layers = Number.parseInt(currentLayers, 10);
+        const r = Number.parseInt(currentRGB.r, 10);
+        const g = Number.parseInt(currentRGB.g, 10);
+        const b = Number.parseInt(currentRGB.b, 10);
 
         if (
             isNaN(layers) ||
@@ -81,7 +83,7 @@ export function FilamentCalibrationWizard({
             b < 0 ||
             b > 255
         ) {
-            alert('Please enter valid values (layers ≥ 1, RGB 0-255)');
+            setErrorMessage('Please enter valid values (layers ≥ 1, RGB 0-255).');
             return;
         }
 
@@ -97,6 +99,7 @@ export function FilamentCalibrationWizard({
         setMeasurements((prev) => [...prev, newMeasurement]);
         setCurrentLayers('');
         setCurrentRGB({ r: '', g: '', b: '' });
+        setErrorMessage(null);
     }, [currentLayers, currentRGB]);
 
     const handleRemoveMeasurement = useCallback((index: number) => {
@@ -106,7 +109,7 @@ export function FilamentCalibrationWizard({
     const handleCalculate = useCallback(() => {
         const { ready, reason } = canCalculateTD(measurements);
         if (!ready) {
-            alert(reason || 'Cannot calculate TD yet');
+            setErrorMessage(reason || 'Cannot calculate TD yet.');
             return;
         }
 
@@ -128,8 +131,9 @@ export function FilamentCalibrationWizard({
 
             setResult(calibrationResult);
             setStep('results');
+            setErrorMessage(null);
         } catch (err) {
-            alert(err instanceof Error ? err.message : 'Failed to calculate TD');
+            setErrorMessage(err instanceof Error ? err.message : 'Failed to calculate TD.');
         }
     }, [measurements, layerHeight, filamentColor, filamentName]);
 
@@ -141,6 +145,7 @@ export function FilamentCalibrationWizard({
             setStep('intro');
             setMeasurements(existingMeasurements);
             setResult(null);
+            setErrorMessage(null);
         }
     }, [result, onComplete, onClose, existingMeasurements]);
 
@@ -153,6 +158,7 @@ export function FilamentCalibrationWizard({
             setCurrentLayers('');
             setCurrentRGB({ r: '', g: '', b: '' });
             setResult(null);
+            setErrorMessage(null);
         }, 300);
     }, [onClose, existingMeasurements]);
 
@@ -167,7 +173,7 @@ export function FilamentCalibrationWizard({
                     </p>
                     <p className="font-semibold">You will need:</p>
                     <ul className="list-disc list-inside space-y-1 text-sm">
-                        <li>Your {filamentName} filament</li>
+                        <li>{filamentName}</li>
                         <li>A 3D printer</li>
                         <li>A backlit white surface (phone screen works great)</li>
                         <li>A color picker tool (digital or app)</li>
@@ -369,6 +375,10 @@ export function FilamentCalibrationWizard({
                     {!ready && reason && (
                         <p className="text-xs text-yellow-600 dark:text-yellow-400">{reason}</p>
                     )}
+
+                    {errorMessage && (
+                        <p className="text-xs text-destructive">{errorMessage}</p>
+                    )}
                 </div>
 
                 <AlertDialogFooter>
@@ -461,7 +471,16 @@ export function FilamentCalibrationWizard({
 
     return (
         <AlertDialog open={open} onOpenChange={onClose}>
-            <AlertDialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <AlertDialogContent className="relative max-w-2xl max-h-[90vh] overflow-y-auto">
+                <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={handleCancel}
+                    className="absolute right-3 top-3 h-7 w-7 text-muted-foreground hover:text-foreground"
+                    aria-label="Close calibration wizard"
+                >
+                    <X className="h-4 w-4" />
+                </Button>
                 {step === 'intro' && renderIntro()}
                 {step === 'print' && renderPrintInstructions()}
                 {step === 'measure' && renderMeasurement()}
