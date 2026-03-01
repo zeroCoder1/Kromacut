@@ -882,6 +882,7 @@ export default function AutoPaintTab({
             {/* Calibration Wizard */}
             {calibratingFilament && (
                 <FilamentCalibrationWizard
+                    key={calibratingFilament.id}
                     open={calibrationWizardOpen}
                     onClose={handleCloseCalibrationWizard}
                     onComplete={handleCalibrationComplete}
