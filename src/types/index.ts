@@ -16,17 +16,15 @@ export interface Filament {
     id: string;
     color: string;
     td: number;
-    // Optional calibration data for higher confidence
     calibration?: CalibrationResult;
-    // Filament metadata
-    brand?: string;
     name?: string;
-    notes?: string;
+    brand?: string;
 }
 
 export interface ThreeDControlsStateShape {
     layerHeight: number;
     slicerFirstLayerHeight: number;
+    calibrationLayerHeight?: number;
     colorSliceHeights: number[];
     colorOrder: number[];
     filteredSwatches: Swatch[];

@@ -100,6 +100,32 @@ export function generateCenterWeightedMapSimple(
 }
 
 /**
+ * Generate a simple edge-priority map from geometry only.
+ * Weights increase toward the image borders and are normalized to 0-1.
+ */
+export function generateEdgeWeightedMapSimple(width: number, height: number): Float32Array {
+    const weights = new Float32Array(width * height);
+    const centerX = width / 2;
+    const centerY = height / 2;
+    const maxDist = Math.sqrt(centerX * centerX + centerY * centerY);
+
+    for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+            const dx = x - centerX;
+            const dy = y - centerY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            const normalizedDist = maxDist > 0 ? dist / maxDist : 0;
+
+            // Low in center, high toward borders
+            weights[y * width + x] = Math.pow(normalizedDist, 1.35);
+        }
+    }
+
+    normalizeWeights(weights);
+    return weights;
+}
+
+/**
  * Generate center-weighted importance map using Gaussian fall-off.
  * Center of image has weight 1.0, edges fade based on strength parameter.
  */

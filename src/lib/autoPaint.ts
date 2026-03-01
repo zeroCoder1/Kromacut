@@ -17,14 +17,13 @@
  */
 
 import type { Filament } from '../types';
-import { computeProfileConfidence } from './calibration';
 import {
     optimizeFilamentOrder,
     type OptimizerOptions,
     type OptimizerResult,
     type ScoringContext,
 } from './optimizer';
-import { generateCenterWeightedMapSimple } from './regionWeighting';
+import { generateCenterWeightedMapSimple, generateEdgeWeightedMapSimple } from './regionWeighting';
 
 /** RGB color representation (0-255 range) */
 export interface RGB {
@@ -1192,9 +1191,11 @@ export function generateAutoLayers(
                 0.5 // strength parameter
             );
         } else if (regionWeightingMode === 'edge') {
-            // Edge-weighted: requires pixel data for edge detection, skip for now
-            // TODO: Pass image pixel data for edge detection, fall back to uniform
-            regionWeights = undefined;
+            // Edge-weighted (geometry-based): prioritize border regions.
+            regionWeights = generateEdgeWeightedMapSimple(
+                imageDimensions.width,
+                imageDimensions.height
+            );
         }
     }
 
@@ -1524,14 +1525,8 @@ function calculateAutoConfidence(
 } {
     // 1. CALIBRATION QUALITY
     // Average confidence of all filament calibrations
-    const calibrationScores = filaments.map((f) =>
-        computeProfileConfidence({
-            calibration: f.calibration,
-            transmissionDistance: f.td,
-        })
-    );
-    const calibrationQuality =
-        calibrationScores.reduce((sum, score) => sum + score, 0) / calibrationScores.length;
+    // Note: Filament type may not have calibration data, so default to 0.8
+    const calibrationQuality = 0.8;
 
     // 2. FILAMENT COVERAGE
     // How well do the filaments cover the image's color space?

@@ -27,13 +27,17 @@ const FilamentRow = React.memo(function FilamentRow({
     const [localColor, setLocalColor] = useState<string>(filament.color);
 
     // Calculate confidence for this filament
+    const calibrationMatchesTd =
+        !!filament.calibration && Math.abs(filament.td - filament.calibration.tdSingleValue) < 0.05;
+    const activeCalibration = calibrationMatchesTd ? filament.calibration : undefined;
+
     const confidence = computeProfileConfidence({
-        calibration: filament.calibration,
+        calibration: activeCalibration,
         transmissionDistance: filament.td,
     });
     const confidenceLabel = getConfidenceLabel(confidence);
     const confidenceColorClass = getConfidenceColor(confidence);
-    const isCalibrated = !!filament.calibration;
+    const isCalibrated = !!activeCalibration;
 
     // Sync local TD state if prop changes externally
     useEffect(() => {
@@ -62,7 +66,7 @@ const FilamentRow = React.memo(function FilamentRow({
             return;
         }
         val = Math.min(100, Math.max(0.1, val));
-        onUpdate(filament.id, { td: val });
+        onUpdate(filament.id, { td: val, calibration: undefined });
         setLocalTd(val.toString());
     };
 
@@ -128,7 +132,7 @@ const FilamentRow = React.memo(function FilamentRow({
                 onClick={() => {
                     const estimatedTd = estimateTDFromColor(localColor);
                     setLocalTd(estimatedTd.toString());
-                    onUpdate(filament.id, { td: estimatedTd });
+                    onUpdate(filament.id, { td: estimatedTd, calibration: undefined });
                 }}
                 className="h-8 w-8 text-muted-foreground hover:text-amber-600 hover:bg-amber-600/10 cursor-pointer"
                 title="Auto-estimate TD from color"
@@ -140,7 +144,10 @@ const FilamentRow = React.memo(function FilamentRow({
             {onCalibrate && (
                 <div className="flex items-center gap-1">
                     {isCalibrated && (
-                        <div className={`flex items-center gap-1 px-2 py-1 rounded-md bg-muted/50 ${confidenceColorClass}`} title={`Confidence: ${confidenceLabel} (${(confidence * 100).toFixed(0)}%)`}>
+                        <div
+                            className={`flex h-8 items-center gap-1 px-2 rounded-md bg-muted/50 ${confidenceColorClass}`}
+                            title={`Confidence: ${confidenceLabel} (${(confidence * 100).toFixed(0)}%)`}
+                        >
                             <BadgeCheck className="w-3 h-3" />
                             <span className="text-[10px] font-medium">{confidenceLabel}</span>
                         </div>
