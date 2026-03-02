@@ -1,6 +1,6 @@
 [package]
 name = "app"
-version = "2.3.1"
+version = "2.3.2"
 description = "Kromacut - Multi-color lithophane 3D print generator"
 authors = ["vycdev"]
 license = ""
