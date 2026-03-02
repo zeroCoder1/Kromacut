@@ -113,12 +113,6 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
         savePrintSettingsToStorage({ layerHeight, slicerFirstLayerHeight, pixelSize });
     }, [layerHeight, slicerFirstLayerHeight, pixelSize]);
 
-    const handleResetPrintSettings = useCallback(() => {
-        setLayerHeight(DEFAULT_PRINT_SETTINGS.layerHeight);
-        setSlicerFirstLayerHeight(DEFAULT_PRINT_SETTINGS.slicerFirstLayerHeight);
-        setPixelSize(DEFAULT_PRINT_SETTINGS.pixelSize);
-    }, []);
-
     // --- Color Slicing ---
     const {
         filtered,
@@ -127,6 +121,7 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
         displayOrder,
         onRowChange,
         handleResetHeights,
+        resetHeightsToValues,
         handleColorOrderChange,
         isResetState,
     } = useColorSlicing({
@@ -135,6 +130,16 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
         slicerFirstLayerHeight,
         persisted,
     });
+
+    const handleResetPrintSettings = useCallback(() => {
+        setLayerHeight(DEFAULT_PRINT_SETTINGS.layerHeight);
+        setSlicerFirstLayerHeight(DEFAULT_PRINT_SETTINGS.slicerFirstLayerHeight);
+        setPixelSize(DEFAULT_PRINT_SETTINGS.pixelSize);
+        resetHeightsToValues(
+            DEFAULT_PRINT_SETTINGS.layerHeight,
+            DEFAULT_PRINT_SETTINGS.slicerFirstLayerHeight
+        );
+    }, [resetHeightsToValues]);
 
     // --- Auto-paint (runs in Web Worker to avoid blocking the UI) ---
     const { autoPaintResult, isComputing: isAutoPaintComputing } = useAutoPaintWorker({
