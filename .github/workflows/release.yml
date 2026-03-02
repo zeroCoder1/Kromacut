@@ -64,9 +64,6 @@ jobs:
         needs: build
         runs-on: ubuntu-latest
         steps:
-            - name: Checkout
-              uses: actions/checkout@v4
-
             - name: Publish release
               uses: actions/github-script@v7
               with:
@@ -75,44 +72,14 @@ jobs:
                           owner: context.repo.owner,
                           repo: context.repo.repo
                       });
-                      const draftRelease = releases.data.find(r => r.draft && r.tag_name === context.ref.replace('refs/tags/', ''));
+                      const tagName = context.ref.replace('refs/tags/', '');
+                      const draftRelease = releases.data.find(r => r.draft && r.tag_name === tagName);
                       if (draftRelease) {
                           await github.rest.repos.updateRelease({
                               owner: context.repo.owner,
                               repo: context.repo.repo,
                               release_id: draftRelease.id,
                               draft: false,
-                              body: `## What's New
-
-Download the native application for your platform with better performance than the web version.
-
-### Installation
-
-**macOS:**
-1. Download the \`.dmg\` file for your Mac:
-   - **Apple Silicon (M1/M2/M3)**: \`*_aarch64.dmg\`
-   - **Intel**: \`*_x86_64.dmg\`
-2. Open the DMG and drag Kromacut to Applications
-3. Remove quarantine (required for unsigned apps):
-   \`\`\`bash
-   sudo xattr -d com.apple.quarantine /Applications/Kromacut.app
-   \`\`\`
-4. Launch from Applications
-
-**Windows:**
-1. Download the \`.msi\` installer
-2. Run the installer and follow the prompts
-3. Launch Kromacut from the Start menu
-
-**Linux:**
-1. Download the \`.AppImage\` or \`.deb\` file
-2. For AppImage: \`chmod +x Kromacut*.AppImage && ./Kromacut*.AppImage\`
-3. For Debian/Ubuntu: \`sudo dpkg -i kromacut*.deb\`
-
-### Features
-- Native performance with better GPU acceleration
-- Lower memory usage than web version
-- Faster image processing
-- Offline usage`
+                              body: '## Installation\n\n**macOS:**\n1. Download the .dmg file for your Mac:\n   - Apple Silicon (M1/M2/M3): *_aarch64.dmg\n   - Intel: *_x86_64.dmg\n2. Open the DMG and drag Kromacut to Applications\n3. Remove quarantine (required for unsigned apps):\n   sudo xattr -d com.apple.quarantine /Applications/Kromacut.app\n4. Launch from Applications\n\n**Windows:**\n1. Download the .msi installer\n2. Run the installer and follow the prompts\n3. Launch Kromacut from the Start menu\n\n**Linux:**\n1. Download the .AppImage or .deb file\n2. For AppImage: chmod +x Kromacut*.AppImage && ./Kromacut*.AppImage\n3. For Debian/Ubuntu: sudo dpkg -i kromacut*.deb\n\n## Features\n- Native performance with better GPU acceleration\n- Lower memory usage than web version\n- Faster image processing\n- Offline usage'
                           });
                       }
