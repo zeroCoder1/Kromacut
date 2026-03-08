@@ -24,6 +24,7 @@ import {
     type ScoringContext,
 } from './optimizer';
 import { generateCenterWeightedMapSimple, generateEdgeWeightedMapSimple } from './regionWeighting';
+import { computeProfileConfidence } from './calibration';
 
 /** RGB color representation (0-255 range) */
 export interface RGB {
@@ -851,6 +852,76 @@ function findBestFilamentOrder(
 }
 
 /**
+ * Apply region weighting heuristic to clustered colors.
+ * 
+ * This is an approximation since spatial information is lost during clustering.
+ * We analyze the region weight distribution and adjust cluster weights accordingly:
+ * - High-weight regions (center or edges) boost colors commonly found there
+ * - Uses luminance as a proxy for spatial distribution (centers tend brighter, edges darker)
+ * 
+ * @param clusters Weighted Lab color clusters
+ * @param regionWeights Per-pixel region importance weights
+ * @returns Adjusted color clusters with modified weights
+ */
+function applyRegionWeightHeuristic(
+    clusters: WeightedLab[],
+    regionWeights: Float32Array
+): WeightedLab[] {
+    if (clusters.length === 0 || regionWeights.length === 0) return clusters;
+
+    // Calculate average region weight to determine mode strength
+    let sumWeight = 0;
+    for (let i = 0; i < regionWeights.length; i++) {
+        sumWeight += regionWeights[i];
+    }
+    const avgWeight = sumWeight / regionWeights.length;
+
+    // Calculate luminance variance to detect contrast distribution
+    // Higher contrast (edge mode) vs more uniform (center mode)
+    let sumSqDiff = 0;
+    for (let i = 0; i < regionWeights.length; i++) {
+        const diff = regionWeights[i] - avgWeight;
+        sumSqDiff += diff * diff;
+    }
+    const variance = sumSqDiff / regionWeights.length;
+    const isHighContrast = variance > 0.05; // Threshold for edge-weighted pattern
+
+    // Apply heuristic adjustments
+    let totalAdjustedWeight = 0;
+    const adjustedClusters = clusters.map((cluster) => {
+        let modifier = 1.0;
+
+        if (isHighContrast) {
+            // Edge-weighted mode: boost high-contrast colors (very light or very dark)
+            const isHighContrast = cluster.L < 30 || cluster.L > 70;
+            modifier = isHighContrast ? 1.3 : 0.85;
+        } else {
+            // Center-weighted mode: boost mid-luminance colors (typical of center regions)
+            const isMidLuminance = cluster.L >= 35 && cluster.L <= 65;
+            modifier = isMidLuminance ? 1.2 : 0.9;
+        }
+
+        const adjustedWeight = cluster.weight * modifier;
+        totalAdjustedWeight += adjustedWeight;
+
+        return {
+            ...cluster,
+            weight: adjustedWeight,
+        };
+    });
+
+    // Renormalize to sum to 1.0
+    if (totalAdjustedWeight > 0) {
+        return adjustedClusters.map((c) => ({
+            ...c,
+            weight: c.weight / totalAdjustedWeight,
+        }));
+    }
+
+    return clusters;
+}
+
+/**
  * Advanced optimizer path using simulated annealing / genetic algorithm
  */
 function findBestFilamentOrderWithOptimizer(
@@ -861,7 +932,14 @@ function findBestFilamentOrderWithOptimizer(
     optimizerOptions: Partial<OptimizerOptions>
 ): { sortedFilaments: Filament[]; result: OptimizerResult } {
     // Cluster image colors into weighted Lab targets
-    const imageTargets = clusterImageColors(imageSwatches, 32, 5.0);
+    let imageTargets = clusterImageColors(imageSwatches, 32, 5.0);
+
+    // Apply region weight heuristic if region weights are provided
+    // Note: This is an approximation since we've lost pixel positions during clustering.
+    // Proper implementation would require weighting pixels before aggregation.
+    if (optimizerOptions.regionWeights) {
+        imageTargets = applyRegionWeightHeuristic(imageTargets, optimizerOptions.regionWeights);
+    }
 
     // Build scoring context
     const context: ScoringContext = {
@@ -1125,6 +1203,8 @@ function buildRepeatedSwapSequence(
  * @param enhancedColorMatch - If true, optimize filament ordering for best color reproduction
  * @param allowRepeatedSwaps - If true, allow filaments to appear multiple times in the stack
  * @param optimizerOptions - Advanced optimizer settings (algorithm, seeding, region weighting)
+ * @param regionWeightingMode - Region weighting strategy: uniform, center, or edge
+ * @param imageDimensions - Image width and height for region weight map generation
  * @returns Generated layer segments with zone information
  */
 export function generateAutoLayers(
@@ -1512,7 +1592,7 @@ export function luminanceToHeight(
  */
 function calculateAutoConfidence(
     filaments: Filament[],
-    _imageSwatches: Array<{ hex: string; count?: number }>,
+    imageSwatches: Array<{ hex: string; count?: number }>,
     sortedFilaments: Filament[],
     compressionRatio: number
 ): {
@@ -1524,38 +1604,85 @@ function calculateAutoConfidence(
     };
 } {
     // 1. CALIBRATION QUALITY
-    // Average confidence of all filament calibrations
-    // Note: Filament type may not have calibration data, so default to 0.8
-    const calibrationQuality = 0.8;
+    // Average confidence of all filament calibrations using actual calibration data
+    let calibrationQuality = 0.5; // Default baseline for uncalibrated filaments
+    
+    if (filaments.length > 0) {
+        const confidences = filaments.map((f) =>
+            computeProfileConfidence({
+                calibration: f.calibration,
+                transmissionDistance: f.td,
+            })
+        );
+        calibrationQuality = confidences.reduce((sum, c) => sum + c, 0) / confidences.length;
+    }
 
     // 2. FILAMENT COVERAGE
     // How well do the filaments cover the image's color space?
-    // More filaments = better coverage, but diminishing returns after 5-6
-    const filamentCount = filaments.length;
+    // Check actual color distance between image colors and achievable filament blends
     let filamentCoverage = 0.5; // Baseline
 
-    if (filamentCount >= 6) {
-        filamentCoverage = 0.95; // Excellent coverage
-    } else if (filamentCount >= 4) {
-        filamentCoverage = 0.75 + (filamentCount - 4) * 0.1; // Good coverage
-    } else if (filamentCount >= 2) {
-        filamentCoverage = 0.5 + (filamentCount - 2) * 0.125; // Moderate coverage
-    } else {
-        filamentCoverage = 0.3; // Limited with only 1 filament
-    }
-
-    // Bonus if filaments have good spread across color space
-    // Check luminance range of sorted filaments
-    if (sortedFilaments.length >= 2) {
-        const luminances = sortedFilaments.map((f) => {
-            const rgb = hexToRgb(f.color);
-            return rgbToLab(rgb).L;
-        });
-        const lumRange = Math.max(...luminances) - Math.min(...luminances);
-        // Good spread is 50+ Lab L units (0-100 scale)
-        if (lumRange >= 50) {
-            filamentCoverage = Math.min(1.0, filamentCoverage + 0.1);
+    if (filaments.length > 0 && imageSwatches.length > 0) {
+        // Basic heuristic: more filaments = better coverage
+        const filamentCount = filaments.length;
+        
+        if (filamentCount >= 6) {
+            filamentCoverage = 0.95; // Excellent coverage
+        } else if (filamentCount >= 4) {
+            filamentCoverage = 0.75 + (filamentCount - 4) * 0.1; // Good coverage
+        } else if (filamentCount >= 2) {
+            filamentCoverage = 0.5 + (filamentCount - 2) * 0.125; // Moderate coverage
+        } else {
+            filamentCoverage = 0.3; // Limited with only 1 filament
         }
+
+        // Bonus if filaments have good spread across color space
+        // Check luminance range of sorted filaments
+        if (sortedFilaments.length >= 2) {
+            const luminances = sortedFilaments.map((f) => {
+                const rgb = hexToRgb(f.color);
+                return rgbToLab(rgb).L;
+            });
+            const lumRange = Math.max(...luminances) - Math.min(...luminances);
+            // Good spread is 50+ Lab L units (0-100 scale)
+            if (lumRange >= 50) {
+                filamentCoverage = Math.min(1.0, filamentCoverage + 0.1);
+            }
+        }
+
+        // Advanced: check how well filament colors actually match image palette
+        const filamentColors = sortedFilaments.map((f) => {
+            const rgb = hexToRgb(f.color);
+            return rgbToLab(rgb);
+        });
+
+        // For each image color, find nearest filament color
+        let totalDeltaE = 0;
+        let totalWeight = 0;
+
+        for (const imageSwatch of imageSwatches) {
+            const imageColor = rgbToLab(hexToRgb(imageSwatch.hex));
+            const weight = imageSwatch.count ?? 1;
+
+            // Find closest filament
+            let minDeltaE = Infinity;
+            for (const filamentColor of filamentColors) {
+                const de = deltaELab(imageColor, filamentColor);
+                if (de < minDeltaE) {
+                    minDeltaE = de;
+                }
+            }
+
+            totalDeltaE += minDeltaE * weight;
+            totalWeight += weight;
+        }
+
+        const avgDeltaE = totalWeight > 0 ? totalDeltaE / totalWeight : 50;
+
+        // DeltaE penalty: 0 = perfect match, 50+ = poor match
+        // Map to 0-0.2 penalty (subtract from coverage)
+        const deltaEPenalty = Math.min(0.2, avgDeltaE / 250);
+        filamentCoverage = Math.max(0.3, filamentCoverage - deltaEPenalty);
     }
 
     // 3. COMPRESSION IMPACT
