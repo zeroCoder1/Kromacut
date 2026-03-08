@@ -244,51 +244,6 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
         autoPaintSliceData,
     ]);
 
-    // --- Apply handler for auto-paint tab ---
-    const handleAutoPaintApply = useCallback(() => {
-        if (!onChange) return;
-
-        if (autoPaintSliceData && autoPaintResult) {
-            onChange({
-                layerHeight,
-                slicerFirstLayerHeight,
-                colorSliceHeights: autoPaintSliceData.colorSliceHeights,
-                colorOrder: autoPaintSliceData.colorOrder,
-                filteredSwatches: autoPaintSliceData.virtualSwatches,
-                pixelSize,
-                filaments,
-                paintMode: 'autopaint',
-                enhancedColorMatch,
-                allowRepeatedSwaps,
-                heightDithering,
-                ditherLineWidth,
-                optimizerAlgorithm,
-                optimizerSeed,
-                regionWeightingMode,
-                autoPaintResult,
-                autoPaintSwatches: autoPaintSliceData.virtualSwatches,
-                autoPaintFilamentSwatches: autoPaintSliceData.filamentSwatches,
-                calibrationLayerHeight,
-            });
-        }
-    }, [
-        onChange,
-        autoPaintSliceData,
-        autoPaintResult,
-        layerHeight,
-        slicerFirstLayerHeight,
-        pixelSize,
-        filaments,
-        enhancedColorMatch,
-        allowRepeatedSwaps,
-        heightDithering,
-        ditherLineWidth,
-        optimizerAlgorithm,
-        optimizerSeed,
-        regionWeightingMode,
-        calibrationLayerHeight,
-    ]);
-
     return (
         <div className="space-y-4">
             {/* Apply button */}
@@ -385,7 +340,6 @@ export default function ThreeDControls({ swatches, imageDimensions, onChange, pe
                     setOptimizerSeed={setOptimizerSeed}
                     regionWeightingMode={regionWeightingMode}
                     setRegionWeightingMode={setRegionWeightingMode}
-                    onApply={handleAutoPaintApply}
                 />
 
                 {/* Manual Tab */}
