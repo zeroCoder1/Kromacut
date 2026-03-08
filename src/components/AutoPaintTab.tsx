@@ -82,9 +82,6 @@ interface AutoPaintTabProps {
     setOptimizerSeed: (v: number | undefined) => void;
     regionWeightingMode: 'uniform' | 'center' | 'edge';
     setRegionWeightingMode: (v: 'uniform' | 'center' | 'edge') => void;
-
-    // Apply callback
-    onApply?: () => void;
 }
 
 export default function AutoPaintTab({
@@ -113,7 +110,7 @@ export default function AutoPaintTab({
     autoPaintSliceData,
     isComputing = false,
     calibrationLayerHeight,
-    setCalibrationLayerHeight,
+    setCalibrationLayerHeight: _setCalibrationLayerHeight,
     filteredCount,
     enhancedColorMatch,
     setEnhancedColorMatch,
@@ -129,16 +126,12 @@ export default function AutoPaintTab({
     setOptimizerSeed,
     regionWeightingMode,
     setRegionWeightingMode,
-    onApply,
 }: AutoPaintTabProps) {
     const [localDitherLineWidth, setLocalDitherLineWidth] = React.useState(
         ditherLineWidth.toString()
     );
     const [localOptimizerSeed, setLocalOptimizerSeed] = React.useState(
         optimizerSeed?.toString() ?? ''
-    );
-    const [localCalibrationLayerHeight, setLocalCalibrationLayerHeight] = React.useState(
-        calibrationLayerHeight.toString()
     );
 
     // Calibration wizard state
@@ -177,10 +170,6 @@ export default function AutoPaintTab({
     React.useEffect(() => {
         setLocalOptimizerSeed(optimizerSeed?.toString() ?? '');
     }, [optimizerSeed]);
-
-    React.useEffect(() => {
-        setLocalCalibrationLayerHeight(calibrationLayerHeight.toString());
-    }, [calibrationLayerHeight]);
 
     return (
         <TabsContent value="autopaint" forceMount className="data-[state=inactive]:hidden">
@@ -372,42 +361,6 @@ export default function AutoPaintTab({
                         Add Filament
                     </Button>
 
-                    {filaments.length > 0 && (
-                        <div className="space-y-1.5 pt-1">
-                            <div className="flex items-center justify-between">
-                                <Label className="text-xs font-medium text-foreground">
-                                    Calibration layer height
-                                </Label>
-                                <span className="text-[10px] text-muted-foreground">mm</span>
-                            </div>
-                            <NumberInput
-                                min={0.04}
-                                max={1}
-                                step={0.01}
-                                value={localCalibrationLayerHeight}
-                                onChange={(e) => setLocalCalibrationLayerHeight(e.target.value)}
-                                onBlur={() => {
-                                    const raw = parseFloat(localCalibrationLayerHeight);
-                                    if (Number.isNaN(raw)) {
-                                        setLocalCalibrationLayerHeight(
-                                            calibrationLayerHeight.toString()
-                                        );
-                                        return;
-                                    }
-                                    const next = Math.max(0.04, Math.min(1, raw));
-                                    setCalibrationLayerHeight(next);
-                                    setLocalCalibrationLayerHeight(next.toString());
-                                }}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter') {
-                                        e.currentTarget.blur();
-                                    }
-                                }}
-                                className="h-8 text-xs"
-                            />
-                        </div>
-                    )}
-
                     {/* Max Height Constraint */}
                     {filaments.length > 0 && (
                         <div className="space-y-2 pt-2">
@@ -476,27 +429,6 @@ export default function AutoPaintTab({
                                     <Loader2 className="w-3 h-3 animate-spin" />
                                     <span>Optimizing filament order...</span>
                                 </div>
-                            )}
-
-                            {/* Apply button */}
-                            {autoPaintResult && (
-                                <Button
-                                    onClick={onApply}
-                                    disabled={isComputing}
-                                    className="w-full h-8 text-xs cursor-pointer gap-1.5"
-                                >
-                                    {isComputing ? (
-                                        <>
-                                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                            <span>Computing...</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Sparkles className="w-3.5 h-3.5" />
-                                            <span>Apply Changes to 3D</span>
-                                        </>
-                                    )}
-                                </Button>
                             )}
                         </div>
                     )}
