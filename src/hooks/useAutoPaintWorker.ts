@@ -74,6 +74,18 @@ export function useAutoPaintWorker(
         return filtered.map((s) => `${s.hex}:${(s.count as number | undefined) ?? 0}`).join(';');
     }, [filtered]);
 
+    // Keep stable references when only array identity changes but content does not.
+    const stableFilaments = useMemo(() => filaments, [filamentsKey]);
+
+    const stableImageSwatches = useMemo(
+        () =>
+            filtered.map((s) => ({
+                hex: s.hex,
+                count: s.count as number | undefined,
+            })),
+        [filteredKey]
+    );
+
     // Create the worker lazily on first need.
     const getWorker = useCallback(() => {
         if (!workerRef.current) {
@@ -137,11 +149,8 @@ export function useAutoPaintWorker(
 
             const request: AutoPaintWorkerRequest = {
                 id,
-                filaments,
-                imageSwatches: filtered.map((s) => ({
-                    hex: s.hex,
-                    count: s.count as number | undefined,
-                })),
+                filaments: stableFilaments,
+                imageSwatches: stableImageSwatches,
                 layerHeight,
                 firstLayerHeight: slicerFirstLayerHeight,
                 maxHeight: autoPaintMaxHeight,
@@ -179,8 +188,8 @@ export function useAutoPaintWorker(
         regionWeightingMode,
         imageDimensions,
         getWorker,
-        filaments, // Still need the actual arrays for the worker
-        filtered,
+        stableFilaments,
+        stableImageSwatches,
     ]);
 
     return { autoPaintResult, isComputing };
