@@ -3,8 +3,8 @@ name = "app"
 version = "2.3.2"
 description = "Kromacut - Multi-color lithophane 3D print generator"
 authors = ["vycdev"]
-license = ""
-repository = ""
+license = "MIT"
+repository = "https://github.com/vycdev/Kromacut"
 edition = "2021"
 rust-version = "1.77.2"
 
