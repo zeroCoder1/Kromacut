@@ -1618,45 +1618,15 @@ function calculateAutoConfidence(
     }
 
     // 2. FILAMENT COVERAGE
-    // How well do the filaments cover the image's color space?
-    // Check actual color distance between image colors and achievable filament blends
+    // How well do the filament colors cover the image's color space?
+    // Primary metric: actual deltaE distance between image colors and nearest filament.
+    // Secondary: filament count caps the maximum achievable coverage.
     let filamentCoverage = 0.5; // Baseline
 
     if (filaments.length > 0 && imageSwatches.length > 0) {
-        // Basic heuristic: more filaments = better coverage
-        const filamentCount = filaments.length;
-        
-        if (filamentCount >= 6) {
-            filamentCoverage = 0.95; // Excellent coverage
-        } else if (filamentCount >= 4) {
-            filamentCoverage = 0.75 + (filamentCount - 4) * 0.1; // Good coverage
-        } else if (filamentCount >= 2) {
-            filamentCoverage = 0.5 + (filamentCount - 2) * 0.125; // Moderate coverage
-        } else {
-            filamentCoverage = 0.3; // Limited with only 1 filament
-        }
+        const filamentColors = sortedFilaments.map((f) => rgbToLab(hexToRgb(f.color)));
 
-        // Bonus if filaments have good spread across color space
-        // Check luminance range of sorted filaments
-        if (sortedFilaments.length >= 2) {
-            const luminances = sortedFilaments.map((f) => {
-                const rgb = hexToRgb(f.color);
-                return rgbToLab(rgb).L;
-            });
-            const lumRange = Math.max(...luminances) - Math.min(...luminances);
-            // Good spread is 50+ Lab L units (0-100 scale)
-            if (lumRange >= 50) {
-                filamentCoverage = Math.min(1.0, filamentCoverage + 0.1);
-            }
-        }
-
-        // Advanced: check how well filament colors actually match image palette
-        const filamentColors = sortedFilaments.map((f) => {
-            const rgb = hexToRgb(f.color);
-            return rgbToLab(rgb);
-        });
-
-        // For each image color, find nearest filament color
+        // For each image color, find nearest filament color (weighted by pixel count)
         let totalDeltaE = 0;
         let totalWeight = 0;
 
@@ -1664,13 +1634,10 @@ function calculateAutoConfidence(
             const imageColor = rgbToLab(hexToRgb(imageSwatch.hex));
             const weight = imageSwatch.count ?? 1;
 
-            // Find closest filament
             let minDeltaE = Infinity;
             for (const filamentColor of filamentColors) {
                 const de = deltaELab(imageColor, filamentColor);
-                if (de < minDeltaE) {
-                    minDeltaE = de;
-                }
+                if (de < minDeltaE) minDeltaE = de;
             }
 
             totalDeltaE += minDeltaE * weight;
@@ -1679,10 +1646,20 @@ function calculateAutoConfidence(
 
         const avgDeltaE = totalWeight > 0 ? totalDeltaE / totalWeight : 50;
 
-        // DeltaE penalty: 0 = perfect match, 50+ = poor match
-        // Map to 0-0.2 penalty (subtract from coverage)
-        const deltaEPenalty = Math.min(0.2, avgDeltaE / 250);
-        filamentCoverage = Math.max(0.3, filamentCoverage - deltaEPenalty);
+        // Map avgDeltaE to a 0-1 score: 0 deltaE = 1.0, 50+ deltaE = ~0.2
+        // Decay constant of 35 accounts for Beer-Lambert blending producing
+        // better results than raw filament-to-swatch deltaE suggests.
+        filamentCoverage = 0.2 + 0.8 * Math.exp(-avgDeltaE / 35);
+
+        // Cap by filament count — even perfect color matches are limited by
+        // how many distinct layers can be stacked
+        const filamentCount = filaments.length;
+        let countCap = 1.0;
+        if (filamentCount === 1) countCap = 0.5;
+        else if (filamentCount === 2) countCap = 0.7;
+        else if (filamentCount === 3) countCap = 0.85;
+
+        filamentCoverage = Math.min(filamentCoverage, countCap);
     }
 
     // 3. COMPRESSION IMPACT
