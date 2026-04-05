@@ -2,6 +2,11 @@
 
 All notable changes to Kromacut are documented in this file.
 
+## v2.5.0 - unreleased
+
+### Added
+- **Calibration test patches STL** — Download button in the TD calibration wizard's print step generates a ready-to-print STL of all test patches (2, 4, 6, 8, 10 layers) as a single connected model, sized to the current layer height setting
+
 ## v2.4.0 - 2026-04-05
 
 ### Fixed

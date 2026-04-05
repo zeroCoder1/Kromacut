@@ -51,7 +51,7 @@ export interface CalibrationState {
 // Constants
 // ============================================================================
 
-const RECOMMENDED_LAYER_COUNTS = [2, 4, 6, 8, 10];
+export const RECOMMENDED_LAYER_COUNTS = [2, 4, 6, 8, 10];
 const MIN_MEASUREMENTS = 3;
 const CONFIDENCE_THRESHOLD_EXCELLENT = 0.9;
 const CONFIDENCE_THRESHOLD_GOOD = 0.7;

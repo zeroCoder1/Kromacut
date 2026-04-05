@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card } from '@/components/ui/card';
-import { X } from 'lucide-react';
+import { X, Download } from 'lucide-react';
 import {
     calculateTDFromMeasurements,
     rgbToTransmission,
@@ -28,9 +28,11 @@ import {
     canCalculateTD,
     getConfidenceLabel,
     getConfidenceColor,
+    RECOMMENDED_LAYER_COUNTS,
     type CalibrationMeasurement,
     type CalibrationResult,
 } from '@/lib/calibration';
+import { generateCalibrationPatchesStl } from '@/lib/generateCalibrationPatchesStl';
 
 type WizardStep = 'intro' | 'print' | 'measure' | 'results';
 
@@ -177,6 +179,16 @@ export function FilamentCalibrationWizard({
         </>
     );
 
+    const handleDownloadPatches = () => {
+        const blob = generateCalibrationPatchesStl(RECOMMENDED_LAYER_COUNTS, calibrationLayerHeight);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `calibration_patches_${calibrationLayerHeight.toFixed(2)}mm.stl`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
     const renderPrintInstructions = () => {
         const instructions = getCalibrationInstructions(calibrationLayerHeight);
 
@@ -184,7 +196,9 @@ export function FilamentCalibrationWizard({
             <>
                 <AlertDialogHeader>
                     <AlertDialogTitle>Step 1: Print Test Patches</AlertDialogTitle>
-                    <AlertDialogDescription className="space-y-3">
+                </AlertDialogHeader>
+                <div className="space-y-3">
+                    <AlertDialogDescription asChild>
                         <div className="space-y-2">
                             {instructions.map((instruction, i) => (
                                 <p key={i} className="text-sm">
@@ -193,48 +207,57 @@ export function FilamentCalibrationWizard({
                                 </p>
                             ))}
                         </div>
-
-                        <Card className="p-4 bg-muted">
-                            <p className="text-sm font-semibold mb-2">Print Settings:</p>
-                            <ul className="text-sm space-y-1">
-                                <li>
-                                    <strong>Filament:</strong>{' '}
-                                    <span
-                                        className="inline-block w-4 h-4 rounded border"
-                                        style={{ backgroundColor: filamentColor }}
-                                    />{' '}
-                                    {filamentName}
-                                </li>
-                                <li className="flex items-center gap-2">
-                                    <strong>Layer Height:</strong>
-                                    <Input
-                                        type="number"
-                                        value={calibrationLayerHeight}
-                                        onChange={(e) => setCalibrationLayerHeight(Number(e.target.value))}
-                                        step="0.01"
-                                        min="0.05"
-                                        max="0.4"
-                                        className="w-20 h-7 text-xs"
-                                    />
-                                    <span className="text-xs">mm</span>
-                                </li>
-                                <li>
-                                    <strong>Infill:</strong> 100%
-                                </li>
-                                <li>
-                                    <strong>Patch Size:</strong> 20mm × 20mm (or larger)
-                                </li>
-                                <li>
-                                    <strong>Layer Counts:</strong> {recommended.join(', ')} layers
-                                </li>
-                            </ul>
-                        </Card>
-
-                        <p className="text-xs text-muted-foreground">
-                            💡 Tip: Label each patch with its layer count using a marker.
-                        </p>
                     </AlertDialogDescription>
-                </AlertDialogHeader>
+
+                    <Card className="p-4 bg-muted">
+                        <p className="text-sm font-semibold mb-2">Print Settings:</p>
+                        <ul className="text-sm space-y-1">
+                            <li>
+                                <strong>Filament:</strong>{' '}
+                                <span
+                                    className="inline-block w-4 h-4 rounded border"
+                                    style={{ backgroundColor: filamentColor }}
+                                />{' '}
+                                {filamentName}
+                            </li>
+                            <li className="flex items-center gap-2">
+                                <strong>Layer Height:</strong>
+                                <Input
+                                    type="number"
+                                    value={calibrationLayerHeight}
+                                    onChange={(e) => setCalibrationLayerHeight(Number(e.target.value))}
+                                    step="0.01"
+                                    min="0.05"
+                                    max="0.4"
+                                    className="w-20 h-7 text-xs"
+                                />
+                                <span className="text-xs">mm</span>
+                            </li>
+                            <li>
+                                <strong>Infill:</strong> 100%
+                            </li>
+                            <li>
+                                <strong>Patch Size:</strong> 20mm × 20mm (or larger)
+                            </li>
+                            <li>
+                                <strong>Layer Counts:</strong> {recommended.join(', ')} layers
+                            </li>
+                        </ul>
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleDownloadPatches}
+                            className="mt-3 w-full gap-2"
+                        >
+                            <Download className="w-4 h-4" />
+                            Download Test Patches STL
+                        </Button>
+                    </Card>
+
+                    <p className="text-xs text-muted-foreground">
+                        💡 Tip: Label each patch with its layer count using a marker.
+                    </p>
+                </div>
                 <AlertDialogFooter>
                     <Button variant="outline" onClick={() => setStep('intro')}>
                         Back
