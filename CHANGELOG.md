@@ -2,7 +2,7 @@
 
 All notable changes to Kromacut are documented in this file.
 
-## [2.4.0] - 2026-04-05
+## v2.4.0 - 2026-04-05
 
 ### Fixed
 - **Linux binary name** — Tauri Cargo package renamed from `app` to `kromacut`, fixing the installed binary being `/usr/bin/app` on Debian instead of `/usr/bin/kromacut`
@@ -16,7 +16,7 @@ All notable changes to Kromacut are documented in this file.
 - `.claude/` directory removed from git tracking
 - Removed deprecated `baseUrl` from `tsconfig.app.json` (redundant with `paths` in bundler mode)
 
-## [2.3.2] - 2026-03-13
+## v2.3.2 - 2026-03-13
 
 ### Added
 - **Native desktop app** — Tauri-based builds for macOS (Apple Silicon + Intel), Windows, and Linux
@@ -45,7 +45,7 @@ All notable changes to Kromacut are documented in this file.
 - `useAutoPaintWorker` firing excessively due to unstable object references
 - Build 3D Model button had transparent gap at top of scroll container
 
-## [2.2.0] - 2026-02-15
+## v2.2.0 - 2026-02-15
 
 ### Added
 - **Auto-paint mode** — Define filaments with color and Transmission Distance, automatic Beer-Lambert optical blending computes optimal layer stacks
@@ -65,7 +65,7 @@ All notable changes to Kromacut are documented in this file.
 - Greedy meshing algorithm made async with periodic yielding for UI responsiveness
 - 3MF export enriched with layer height, first layer height, and filament colors
 
-## [2.0.0] - 2025-12-01
+## v2.0.0 - 2025-12-01
 
 ### Added
 - **3MF export** — Multi-material export with per-color objects and slicer metadata
@@ -84,7 +84,7 @@ All notable changes to Kromacut are documented in this file.
 - Color swap instruction accuracy
 - Inverted normals in mesh generation
 
-## [1.0.0] - 2025-10-01
+## v1.0.0 - 2025-10-01
 
 ### Added
 - Image upload with drag-and-drop support
